@@ -7,6 +7,40 @@ interface DirEntry { name: string; isDir: boolean; }
 
 const SPECIAL_DIRS = new Set(["node_modules", "target", ".git"]);
 
+/**
+ * Pure, DOM-free state the tree view is built from: which rows are expanded,
+ * the `list_dir` cache/error/in-flight bookkeeping keyed by absolute path.
+ * Split out from `Explorer` so it can be unit-tested directly (no `document`,
+ * no `invoke`) — `render()` never reconstructs this, it only reads it, which
+ * is exactly what keeps expand/collapse state alive across re-renders.
+ */
+export class ExplorerState {
+  readonly expanded = new Set<string>();
+  readonly dirCache = new Map<string, DirEntry[]>();
+  readonly dirErrors = new Map<string, string>();
+  readonly loading = new Set<string>();
+
+  toggle(key: string): void {
+    if (this.expanded.has(key)) this.expanded.delete(key); else this.expanded.add(key);
+  }
+
+  isOpen(key: string): boolean {
+    return this.expanded.has(key);
+  }
+
+  /** Whether a fresh `list_dir(path)` call should be kicked off — false once cached, errored, or already in flight. */
+  shouldFetch(path: string): boolean {
+    return !this.dirCache.has(path) && !this.dirErrors.has(path) && !this.loading.has(path);
+  }
+
+  /** What a directory node should render as, before any DOM is touched. */
+  dirRenderMode(path: string): "error" | "loading" | "ready" {
+    if (this.dirErrors.has(path)) return "error";
+    if (!this.dirCache.has(path)) return "loading";
+    return "ready";
+  }
+}
+
 const el = (tag: string, cls: string, text = ""): HTMLElement => {
   const e = document.createElement(tag); e.className = cls; e.textContent = text; return e;
 };
@@ -32,13 +66,10 @@ export class Explorer {
   private container: HTMLElement;
   private onFocusSession: (id: string) => void;
 
-  // Expand/collapse state keyed by a stable string per row (project slug,
-  // "<slug>#files"/"<slug>#sessions", or the directory's own absolute path
-  // for nested file-tree nodes) — never by array index, which would shift.
-  private expanded = new Set<string>();
-  private dirCache = new Map<string, DirEntry[]>();
-  private dirErrors = new Map<string, string>();
-  private loading = new Set<string>();
+  // Keyed by a stable string per row (project slug, "<slug>#files"/
+  // "<slug>#sessions", or the directory's own absolute path for nested
+  // file-tree nodes) — never by array index, which would shift.
+  private state = new ExplorerState();
 
   private lastStore: Store | null = null;
 
@@ -73,7 +104,7 @@ export class Explorer {
   ): HTMLElement {
     const wrap = el("div", "explorer-project");
     const key = `proj:${pd.slug}`;
-    const isOpen = this.expanded.has(key);
+    const isOpen = this.state.isOpen(key);
 
     const projectDirs = store.discovery?.projectDirs;
     const header = row(pd.exists ? "explorer-project-header" : "explorer-project-header dim");
@@ -89,7 +120,7 @@ export class Explorer {
     }
 
     header.onclick = () => {
-      if (isOpen) this.expanded.delete(key); else this.expanded.add(key);
+      this.state.toggle(key);
       this.rerender();
     };
 
@@ -104,11 +135,11 @@ export class Explorer {
 
   private renderGroup(key: string, label: string, body: () => HTMLElement): HTMLElement {
     const wrap = el("div", "explorer-group");
-    const isOpen = this.expanded.has(key);
+    const isOpen = this.state.isOpen(key);
     const header = row("explorer-group-header");
     header.append(el("span", "explorer-caret", isOpen ? "▾" : "▸"), el("span", "", label));
     header.onclick = () => {
-      if (isOpen) this.expanded.delete(key); else this.expanded.add(key);
+      this.state.toggle(key);
       this.rerender();
     };
     wrap.append(header);
@@ -147,39 +178,40 @@ export class Explorer {
   // reuses this same lazy-loading path, it is just gated behind an extra click.
   private renderDirTree(path: string): HTMLElement {
     const wrap = el("div", "explorer-dir");
-    if (this.dirErrors.has(path)) {
-      wrap.append(el("div", "explorer-row dim", `⚠ ${this.dirErrors.get(path)}`));
+    const mode = this.state.dirRenderMode(path);
+    if (mode === "error") {
+      wrap.append(el("div", "explorer-row dim", `⚠ ${this.state.dirErrors.get(path)}`));
       return wrap;
     }
-    const cached = this.dirCache.get(path);
-    if (!cached) {
-      if (!this.loading.has(path)) this.loadDir(path);
+    if (mode === "loading") {
+      if (this.state.shouldFetch(path)) this.loadDir(path);
       wrap.append(el("div", "explorer-row dim", "loading…"));
       return wrap;
     }
+    const cached = this.state.dirCache.get(path)!;
     for (const entry of cached) {
       const childPath = `${path}/${entry.name}`;
+      const dim = entry.name.startsWith(".");
       if (entry.isDir && SPECIAL_DIRS.has(entry.name)) {
         wrap.append(this.renderSpecialDir(childPath, entry.name));
       } else if (entry.isDir) {
-        wrap.append(this.renderExpandableDir(childPath, entry.name));
+        wrap.append(this.renderExpandableDir(childPath, entry.name, dim));
       } else {
-        const cls = entry.name.startsWith(".") ? "explorer-row dim" : "explorer-row";
-        wrap.append(el("div", cls, entry.name));
+        wrap.append(el("div", dim ? "explorer-row dim" : "explorer-row", entry.name));
       }
     }
     if (cached.length === 0) wrap.append(el("div", "explorer-row dim", "empty"));
     return wrap;
   }
 
-  private renderExpandableDir(childPath: string, name: string): HTMLElement {
+  private renderExpandableDir(childPath: string, name: string, dim: boolean): HTMLElement {
     const box = el("div", "explorer-subdir");
     const key = `dir:${childPath}`;
-    const isOpen = this.expanded.has(key);
-    const r = row("explorer-row explorer-dir-row");
+    const isOpen = this.state.isOpen(key);
+    const r = row(`explorer-row explorer-dir-row${dim ? " dim" : ""}`);
     r.append(el("span", "explorer-caret", isOpen ? "▾" : "▸"), el("span", "", name));
     r.onclick = () => {
-      if (isOpen) this.expanded.delete(key); else this.expanded.add(key);
+      this.state.toggle(key);
       this.rerender();
     };
     box.append(r);
@@ -190,41 +222,39 @@ export class Explorer {
   private renderSpecialDir(childPath: string, name: string): HTMLElement {
     const box = el("div", "explorer-subdir");
     const key = `dir:${childPath}`;
-    const isOpen = this.expanded.has(key);
+    const isOpen = this.state.isOpen(key);
     const r = row("explorer-row explorer-dir-row explorer-special-dir");
-    const count = this.dirCache.get(childPath)?.length;
+    const count = this.state.dirCache.get(childPath)?.length;
     r.append(
       el("span", "explorer-caret", isOpen ? "▾" : "▸"),
       el("span", "", name),
       el("span", "chip dim", count === undefined ? "…" : String(count)),
     );
     r.onclick = () => {
-      if (isOpen) this.expanded.delete(key); else this.expanded.add(key);
-      if (!this.dirCache.has(childPath) && !this.loading.has(childPath)) this.loadDir(childPath);
+      this.state.toggle(key);
+      if (this.state.shouldFetch(childPath)) this.loadDir(childPath);
       this.rerender();
     };
     box.append(r);
     // Prime the count badge even before the user expands, so it reads
     // "node_modules (128)" rather than a bare caret — one shallow listing,
     // not a recursive scan.
-    if (!this.dirCache.has(childPath) && !this.dirErrors.has(childPath) && !this.loading.has(childPath)) {
-      this.loadDir(childPath);
-    }
+    if (this.state.shouldFetch(childPath)) this.loadDir(childPath);
     if (isOpen) box.append(this.renderDirTree(childPath));
     return box;
   }
 
   private loadDir(path: string): void {
-    this.loading.add(path);
+    this.state.loading.add(path);
     invoke<DirEntry[]>("list_dir", { path })
       .then((entries) => {
-        this.dirCache.set(path, entries);
-        this.loading.delete(path);
+        this.state.dirCache.set(path, entries);
+        this.state.loading.delete(path);
         this.rerender();
       })
       .catch((err: unknown) => {
-        this.dirErrors.set(path, String(err));
-        this.loading.delete(path);
+        this.state.dirErrors.set(path, String(err));
+        this.state.loading.delete(path);
         this.rerender();
       });
   }

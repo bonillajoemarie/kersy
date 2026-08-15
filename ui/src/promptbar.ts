@@ -7,6 +7,23 @@ const NO_PROJECTS = "No projects found — open a project with Claude Code first
 const NO_PROMPT = "Enter a prompt to run";
 
 /**
+ * Pure precedence rule for the prompt bar's disabled state: no CLI beats no
+ * projects beats an empty prompt. Returns the explanatory string to show as
+ * a `title` (matching the perpetual-new-hire "disabled things explain
+ * themselves" rule), or `null` when nothing should be disabled.
+ *
+ * `cliAvailable` is `null` while the one-time `cli_available` probe is still
+ * in flight — treated the same as "available" (not disabled for that reason
+ * yet) until the probe resolves, matching the constructor's initial state.
+ */
+export function disabledReason(cliAvailable: boolean | null, projectCount: number, promptText: string): string | null {
+  if (cliAvailable === false) return NO_CLI;
+  if (projectCount === 0) return NO_PROJECTS;
+  if (promptText.trim().length === 0) return NO_PROMPT;
+  return null;
+}
+
+/**
  * Thin prompt bar: project picker + single-line input + Run, launching the
  * real `claude` CLI headless via `run_prompt`. No chat UI here — the new
  * session shows up on the map through the existing watcher.
@@ -66,17 +83,19 @@ export class PromptBar {
     }
     if (projectDirs.some((p) => p.path === prevValue)) this.select.value = prevValue;
 
-    const noCli = this.cliAvailable === false;
-    const noProjects = projectDirs.length === 0;
-    const noPrompt = this.input.value.trim().length === 0;
+    // The select/input only ever need to be disabled for the CLI/no-projects
+    // reasons (typing into them is meaningless either way); a bare
+    // "prompt-non-empty" check keeps disabledReason from also gating them on
+    // NO_PROMPT, so the precedence check below covers just those two.
+    const structuralReason = disabledReason(this.cliAvailable, projectDirs.length, "x");
+    this.select.disabled = structuralReason !== null;
+    this.select.title = structuralReason ?? "";
+    this.input.disabled = structuralReason !== null;
+    this.input.title = structuralReason ?? "";
 
-    this.select.disabled = noCli || noProjects;
-    this.select.title = noCli ? NO_CLI : noProjects ? NO_PROJECTS : "";
-    this.input.disabled = noCli || noProjects;
-    this.input.title = noCli ? NO_CLI : noProjects ? NO_PROJECTS : "";
-
-    this.button.disabled = noCli || noProjects || noPrompt;
-    this.button.title = noCli ? NO_CLI : noProjects ? NO_PROJECTS : noPrompt ? NO_PROMPT : "";
+    const reason = disabledReason(this.cliAvailable, projectDirs.length, this.input.value);
+    this.button.disabled = reason !== null;
+    this.button.title = reason ?? "";
   }
 
   private async submit(): Promise<void> {
