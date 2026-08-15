@@ -44,6 +44,11 @@ pub struct TaskSnapshot {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "event", content = "data", rename_all = "camelCase", rename_all_fields = "camelCase")]
+// Boxing AgentUpserted would change its serde wire shape (adds a layer of
+// indirection the frontend's tagged-union decoder doesn't expect); these
+// events are low-frequency (one per session/agent change), so the size
+// difference is not a hot-path cost worth the wire-format churn.
+#[allow(clippy::large_enum_variant)]
 pub enum MapEvent {
     AgentUpserted(AgentSnapshot),
     TasksUpserted { session_id: String, tasks: Vec<TaskSnapshot> },
