@@ -83,6 +83,18 @@ agent-map/
 - **Top bar:** filter by project, "live only" toggle (hides stale), pause-layout button.
 - Dark theme default (matches terminal workflow); light supported.
 
+## Lightweight constraints (hard requirements, owner 2026-08-15)
+
+Kersy must stay a background-friendly tool, not another Electron hog. These are acceptance criteria, checked before any release build:
+
+- **No frontend framework, no bundler bloat:** plain TypeScript + canvas; the only runtime JS dependency is `d3-force` (layout math only, ~15 KB gzip). No React/Vue, no component library, no CSS framework — hand-written CSS.
+- **Minimal Rust dependency set:** `tauri`, `serde`/`serde_json`, `notify` + `notify-debouncer-full`, `tokio`, `dirs`, and a logging facade. Every additional crate needs a stated reason in the PR.
+- **Binary/installer ≤ 15 MB**; uses the OS webview (never bundles a browser engine).
+- **Idle cost ~zero:** event-driven end to end — no polling loops; when no transcript is being written, CPU sits at 0% and the force simulation is paused (it also pauses when the window is hidden/minimized).
+- **Memory bounded by design:** byte-offset tailing (never re-read or hold whole transcripts), ring buffers (~50 events/agent), stub nodes + lazy parse for sessions older than 7 days, target < 150 MB RSS with all live sessions on screen.
+- **Fast start:** window visible < 1 s; discovery + initial scan streams in behind it (splash states, never blocks).
+- **Renderer stays cheap:** one canvas, one `requestAnimationFrame` loop that stops when the simulation settles; no per-node DOM elements.
+
 ## Distribution
 
 - `tauri build` → `.rpm` + AppImage on this Fedora machine now.
