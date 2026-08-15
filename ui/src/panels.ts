@@ -19,14 +19,19 @@ export function renderTasks(store: Store, container: HTMLElement, onPick: (sessi
     for (const { sid, t } of buckets[status]) {
       const row = el("div", `task task-${status}`, t.subject);
       if (t.blockedBy.length) row.append(el("span", "blocked", ` ⛔ blocked by ${t.blockedBy.join(", ")}`));
-      row.onclick = () => onPick(sid);
+      row.onclick = () => onPick(sid); // sid is a sessionId, which IS the root agent's id — store.agents.get(sid) resolves
       group.append(row);
     }
     container.append(group);
   }
 }
 
-export async function renderDrillin(agent: AgentView, container: HTMLElement): Promise<void> {
+// `isValid` reports whether this call is still the newest drill-in request. main.ts increments
+// a generation token per call and passes `() => gen === drillinGen`; the initial synchronous
+// clear+render below always belongs to the newest call by definition (it runs before any other
+// call can bump the token further), so it needs no guard — only DOM mutations made after an
+// `await` can race with a newer call and must check `isValid()` before touching the container.
+export async function renderDrillin(agent: AgentView, container: HTMLElement, isValid: () => boolean = () => true): Promise<void> {
   container.hidden = false;
   container.replaceChildren(
     el("h3", "pane-title", `${agent.agentType} — ${agent.description || agent.id}`),
@@ -43,8 +48,13 @@ export async function renderDrillin(agent: AgentView, container: HTMLElement): P
   files.append(el("summary", "", `files touched (${agent.filesTouched.length})`));
   for (const f of agent.filesTouched) files.append(el("div", "cmd", f));
   container.append(files);
-  if (agent.stub) { await invoke("open_stub", { sessionId: agent.sessionId }); return; }
+  if (agent.stub) {
+    await invoke("open_stub", { sessionId: agent.sessionId });
+    if (!isValid()) return; // no DOM mutation follows here today, but guard in case one is added
+    return;
+  }
   const events = await invoke<AgentEventDto[]>("get_agent_events", { agentId: agent.id });
+  if (!isValid()) return;
   const feed = el("div", "feed");
   for (const e of [...events].reverse()) {
     const row = el("div", `evt ${e.isVerification ? "verify" : ""}`, `${e.tool}: ${e.label}`);

@@ -115,9 +115,17 @@ store.onchange = () => {
   if (selected && store.agents.has(selected)) void openDrillin(selected);
 };
 
+// Generation token guarding against the openDrillin/renderDrillin race: store.onchange now
+// re-invokes openDrillin(selected) on every event batch to keep the panel live (see above), so
+// a slow earlier call's awaited invoke() can resolve after the user has selected a different
+// node — without this, agent A's feed could get appended under agent B's freshly-rendered
+// header. Each call captures its own generation number and renderDrillin re-checks it after
+// every await, dropping stale post-await DOM writes.
+let drillinGen = 0;
 async function openDrillin(id: string) {
   const a = store.agents.get(id); if (!a) return;
-  await renderDrillin(a, document.querySelector("#drillin")!);
+  const gen = ++drillinGen;
+  await renderDrillin(a, document.querySelector("#drillin")!, () => gen === drillinGen);
 }
 
 graphCanvas.parentElement!.addEventListener("click", (ev) => {
