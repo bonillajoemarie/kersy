@@ -77,6 +77,7 @@ agent-map/
   - Node hierarchy: project → session → agent (edges from `parentAgentId`).
   - **Animation:** active nodes pulse; new agents spring in; finished agents fade to gray; stale sessions shrink/dim so live work dominates. Each active node carries a live one-line label of its current activity.
 - **Drill-in panel** (click a node): agent type + description, streaming activity feed (last ~50 events with timestamps — shell commands shown verbatim), and the session's task board (grouped by status; `blockedBy` edges optionally overlaid on the graph as dashed links).
+- **Task list pane (always visible):** a dedicated docked pane — not just drill-in — aggregating task boards from `~/.claude/tasks` across sessions: in-progress first, then pending with blocked-by indicators, then completed (collapsed). Clicking a task highlights the session/agents working on it in the graph. This is the owner's live todo view.
 - **Top bar:** filter by project, "live only" toggle (hides stale), pause-layout button.
 - Dark theme default (matches terminal workflow); light supported.
 
