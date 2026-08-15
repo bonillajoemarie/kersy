@@ -21,6 +21,16 @@ Subagent-driven-development runs (and ordinary sessions) spawn agents whose acti
 | Subagent metadata | `.../subagents/agent-<id>.meta.json` | `agentType`, `description`, `toolUseId`, `parentAgentId`, `spawnDepth` → the agent **tree** |
 | Task boards | `~/.claude/tasks/<session-uuid>/<n>.json` | `subject`, `description`, `status` (`pending`/`in_progress`/`completed`), `blocks`, `blockedBy` |
 
+## Launch-time auto-discovery (automap)
+
+On startup the app detects the OS and probes for Claude Code data roots itself — no configuration needed:
+
+1. **Candidate roots, in order:** `$CLAUDE_CONFIG_DIR` if set; `<home>/.claude` (default on Linux/macOS/Windows, via the `dirs` crate); `<XDG_CONFIG_HOME|~/.config>/claude` (Linux XDG variant). Every candidate that exists is probed — multiple roots can be active at once.
+2. **Validation:** a root counts as an install if it contains a `projects/` dir with at least one `*.jsonl` (or session subdir). `tasks/` is optional.
+3. **Automap:** all valid roots are watched simultaneously and their sessions merge into the one graph; a root badge distinguishes them if more than one is found.
+4. **Feedback UI:** a brief discovery splash lists what was probed and what was found ("Found Claude Code data: ~/.claude — 11 projects, 42 sessions"). If nothing is found, the empty-state screen shows the probed paths and a manual "add folder…" picker, which is also available later in settings for non-standard setups.
+5. Discovered/added roots persist in the app's config file so subsequent launches map instantly, but re-probe still runs each launch to pick up new installs.
+
 Notes:
 - Files are written concurrently by live Claude Code processes; the last line may be partial.
 - Project slug encodes the working directory (`-home-jmbonilla-workspace` → `/home/jmbonilla/workspace`).
@@ -39,7 +49,8 @@ agent-map/
 
 ### agent-map-core (Rust library crate)
 
-- **Watcher:** `notify` (recommended-watcher) over `~/.claude/projects` and `~/.claude/tasks`, debounced ~250 ms.
+- **Discovery module:** implements the launch-time automap above; returns the set of valid data roots. Unit-tested with fake home dirs.
+- **Watcher:** `notify` (recommended-watcher) over `<root>/projects` and `<root>/tasks` for every discovered root, debounced ~250 ms.
 - **Tailer:** per-file byte offset map; on change, read only the new bytes, split lines, `serde_json` each. A trailing partial line is buffered until its newline arrives; a malformed complete line is skipped and counted — never fatal.
 - **State model** (single source of truth, behind `tokio::sync::RwLock`):
   - `Project { slug, path, sessions }`
