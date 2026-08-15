@@ -50,7 +50,8 @@ agent-map/
 
 ### agent-map-core (Rust library crate)
 
-- **Discovery module:** implements the launch-time automap above; returns the set of valid data roots. Unit-tested with fake home dirs.
+- **`ToolAdapter` trait (flexibility seam, owner-required):** everything tool-specific — discovery of roots, transcript/task parsing, status derivation — sits behind a per-tool adapter trait with optional capabilities. Phase 1 ships exactly one adapter (Claude Code), but core and UI depend only on the trait, so future tools (Codex, Gemini CLI, …) are single added modules. No speculative code for other tools in Phase 1 — only the seam.
+- **Discovery module:** implements the launch-time automap above via the adapters; returns the set of valid data roots. Unit-tested with fake home dirs.
 - **Watcher:** `notify-debouncer-full` (official notify companion crate — merges rename pairs, dedups creates, suppresses modify-after-create) over `<root>/projects` and `<root>/tasks` for every discovered root; absolute paths; watch the parent roots recursively (Linux/inotify ends a watch when the watched object is deleted, so never watch individual session files); `EventKindMask::CORE` filtering. Debounce timeout ~250 ms.
 - **Tailer:** per-file byte offset map; on change, read only the new bytes, split lines, `serde_json` each. A trailing partial line is buffered until its newline arrives; a malformed complete line is skipped and counted — never fatal.
 - **State model** (single source of truth, behind `tokio::sync::RwLock`):
