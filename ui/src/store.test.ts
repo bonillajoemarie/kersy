@@ -3,7 +3,7 @@ import { Store, type MapEventMsg } from "./store";
 
 const agent = (id: string, parentId: string | null = null): MapEventMsg => ({
   event: "agentUpserted",
-  data: { id, sessionId: id.split("/")[0], project: "-p", agentType: "session", description: "",
+  data: { id, sessionId: id.split("/")[0], project: "-p", tool: "claude-code", agentType: "session", description: "",
     parentId, status: "active", currentActivity: "Bash: ls", contextTokens: 0,
     filesTouched: [], verificationRuns: 0, lastActivityMs: 1, stub: false },
 });

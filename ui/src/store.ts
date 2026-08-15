@@ -1,4 +1,4 @@
-export interface AgentView { id: string; sessionId: string; project: string; agentType: string;
+export interface AgentView { id: string; sessionId: string; project: string; tool: string; agentType: string;
   description: string; parentId: string | null; status: "active" | "idle" | "stale";
   currentActivity: string; contextTokens: number; filesTouched: string[];
   verificationRuns: number; lastActivityMs: number; stub: boolean; }
