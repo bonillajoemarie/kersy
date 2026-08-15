@@ -43,6 +43,14 @@ pub struct TaskSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDir {
+    pub slug: String,
+    pub path: String,
+    pub exists: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "event", content = "data", rename_all = "camelCase", rename_all_fields = "camelCase")]
 // Boxing AgentUpserted would change its serde wire shape (adds a layer of
 // indirection the frontend's tagged-union decoder doesn't expect); these
@@ -53,7 +61,7 @@ pub enum MapEvent {
     AgentUpserted(AgentSnapshot),
     TasksUpserted { session_id: String, tasks: Vec<TaskSnapshot> },
     AgentRemoved { id: String },
-    DiscoveryDone { roots: Vec<String>, projects: u32, sessions: u32 },
+    DiscoveryDone { roots: Vec<String>, projects: u32, sessions: u32, project_dirs: Vec<ProjectDir> },
 }
 
 #[derive(Debug)]
@@ -182,6 +190,24 @@ mod tests {
             "{}",
             json
         );
+    }
+
+    #[test]
+    fn discovery_done_serializes_project_dirs_camel_case() {
+        let ev = MapEvent::DiscoveryDone {
+            roots: vec!["/h/.claude".into()],
+            projects: 1,
+            sessions: 2,
+            project_dirs: vec![ProjectDir {
+                slug: "-home-jmbonilla-workspace".into(),
+                path: "/home/jmbonilla/workspace".into(),
+                exists: true,
+            }],
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.contains(r#""projectDirs":[{"#), "{}", json);
+        assert!(json.contains(r#""slug":"-home-jmbonilla-workspace""#), "{}", json);
+        assert!(json.contains(r#""exists":true"#), "{}", json);
     }
 
     #[test]

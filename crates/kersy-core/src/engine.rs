@@ -1,6 +1,6 @@
 use crate::adapter::DataRoot;
-use crate::claude::{classify, WatchedPath};
-use crate::model::{AgentEventDto, AgentState, MapEvent, TaskSnapshot, World};
+use crate::claude::{classify, project_dir_to_path, WatchedPath};
+use crate::model::{AgentEventDto, AgentState, MapEvent, ProjectDir, TaskSnapshot, World};
 use crate::parser::{parse_line, Fact};
 use crate::status;
 use crate::tailer::Tailer;
@@ -240,10 +240,19 @@ impl Engine {
                 }
             }
         }
+        let project_dirs: Vec<ProjectDir> = projects
+            .iter()
+            .map(|slug| {
+                let path = project_dir_to_path(slug);
+                let exists = Path::new(&path).is_dir();
+                ProjectDir { slug: slug.clone(), path, exists }
+            })
+            .collect();
         events.push(MapEvent::DiscoveryDone {
             roots: roots.iter().map(|r| r.path.display().to_string()).collect(),
             projects: projects.len() as u32,
             sessions,
+            project_dirs,
         });
         events
     }

@@ -1,8 +1,11 @@
+mod fsx;
+
 use kersy_core::adapter::{discover, ToolAdapter};
 use kersy_core::claude::ClaudeCodeAdapter;
 use kersy_core::engine::Engine;
 use kersy_core::model::{AgentEventDto, MapEvent};
 use kersy_core::watcher::{spawn_watcher, FsChange};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
 use tauri::ipc::Channel;
@@ -15,6 +18,10 @@ struct App {
     // does not include DiscoveryDone (that's an event, not part of the world). Stash the one
     // produced by the startup `initial_scan` so every `subscribe` can still replay it.
     discovery_done: MapEvent,
+    // Canonicalized real paths of discovered projects (missing dirs excluded), derived from
+    // `discovery_done`'s `project_dirs` once at startup. This is the allowlist `list_dir` and
+    // `run_prompt` validate against — canonicalize-and-prefix-check, never a shell string.
+    project_paths: Vec<PathBuf>,
 }
 
 /// Lock a `Mutex`, recovering the guard on poison instead of propagating the panic — a panicked
@@ -59,6 +66,21 @@ fn open_stub(state: State<'_, App>, session_id: String) {
 }
 
 #[tauri::command]
+fn list_dir(state: State<'_, App>, path: String) -> Result<Vec<fsx::DirEntry>, String> {
+    fsx::list_dir(Path::new(&path), &state.project_paths)
+}
+
+#[tauri::command]
+fn run_prompt(state: State<'_, App>, project_path: String, prompt: String) -> Result<(), String> {
+    fsx::run_prompt(Path::new(&project_path), &prompt, &state.project_paths)
+}
+
+#[tauri::command]
+fn cli_available() -> bool {
+    fsx::cli_available()
+}
+
+#[tauri::command]
 fn rust_rss_kb() -> u64 {
     std::fs::read_to_string("/proc/self/status")
         .ok()
@@ -82,19 +104,34 @@ pub fn run() {
     let discovery_done = initial_events
         .into_iter()
         .find(|e| matches!(e, MapEvent::DiscoveryDone { .. }))
-        .unwrap_or(MapEvent::DiscoveryDone { roots: vec![], projects: 0, sessions: 0 });
+        .unwrap_or(MapEvent::DiscoveryDone { roots: vec![], projects: 0, sessions: 0, project_dirs: vec![] });
+
+    // Canonicalize each existing project dir up front, so the path-guard in `list_dir`/
+    // `run_prompt` is a cheap prefix check against already-real paths at request time.
+    let project_paths: Vec<PathBuf> = match &discovery_done {
+        MapEvent::DiscoveryDone { project_dirs, .. } => project_dirs
+            .iter()
+            .filter(|pd| pd.exists)
+            .filter_map(|pd| Path::new(&pd.path).canonicalize().ok())
+            .collect(),
+        _ => vec![],
+    };
 
     tauri::Builder::default()
         .manage(App {
             engine: Mutex::new(engine),
             channels: Mutex::new(Vec::new()),
             discovery_done,
+            project_paths,
         })
         .invoke_handler(tauri::generate_handler![
             subscribe,
             get_agent_events,
             open_stub,
-            rust_rss_kb
+            rust_rss_kb,
+            list_dir,
+            run_prompt,
+            cli_available
         ])
         .setup(move |app| {
             // Start the fs watcher on a plain thread (notify has its own threads; mpsc is sync).
