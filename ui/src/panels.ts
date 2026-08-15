@@ -39,7 +39,7 @@ export async function renderDrillin(agent: AgentView, container: HTMLElement, is
   );
   const gauge = el("div", "gauge");
   const pct = Math.min(100, (agent.contextTokens / 180_000) * 100);
-  const cls = pct > 85 ? "error" : pct > 60 ? "warn" : "info";
+  const cls = pct > 85 ? "error" : pct > 60 ? "warn" : "idle";
   gauge.append(el("div", `gauge-fill ${cls}`, `${Math.round(agent.contextTokens / 1000)}k ctx`));
   (gauge.firstChild as HTMLElement).style.width = `${pct}%`;
   container.append(gauge);
