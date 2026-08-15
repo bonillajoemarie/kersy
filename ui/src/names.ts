@@ -38,8 +38,9 @@ export function displayAgent(a: AgentView, projectPath?: string): string {
 
   if (isRoot) {
     // Root precedence: description → currentActivity → "Session in <folder>"
-    if (a.description.trim()) {
-      return a.description;
+    const trimmedDesc = a.description.trim();
+    if (trimmedDesc) {
+      return trimmedDesc;
     }
     if (a.currentActivity.trim()) {
       return a.currentActivity;
@@ -50,8 +51,9 @@ export function displayAgent(a: AgentView, projectPath?: string): string {
     return `Session in ${folderName}`;
   } else {
     // Subagent precedence: description → agentType
-    if (a.description.trim()) {
-      return a.description;
+    const trimmedDesc = a.description.trim();
+    if (trimmedDesc) {
+      return trimmedDesc;
     }
     return a.agentType;
   }
@@ -61,9 +63,27 @@ export function displayAgent(a: AgentView, projectPath?: string): string {
  * Display a human-readable name for a project.
  * Extracts the last path segment from absolute paths or slug forms.
  *
+ * Slug decoding is ambiguous for hyphenated folder names — always pass projectDirs
+ * when available to ensure correct resolution (e.g., "-Users-x-cs-ai-platform" can be
+ * decoded as "platform" or "cs-ai-platform" without the real path). If a matching slug
+ * is found in projectDirs, returns the last segment of its real path (unambiguous).
+ *
  * @param slugOrPath Path like "/home/u/kersy" or slug like "-home-u-kersy"
+ * @param projectDirs Optional array of discovered projects with slug→path mapping
  */
-export function displayProject(slugOrPath: string): string {
+export function displayProject(
+  slugOrPath: string,
+  projectDirs?: Array<{ slug: string; path: string }>
+): string {
+  // If it's a slug and we have projectDirs, try to find the matching real path
+  if (slugOrPath.startsWith("-") && projectDirs) {
+    const match = projectDirs.find((p) => p.slug === slugOrPath);
+    if (match) {
+      return lastSegment(match.path);
+    }
+  }
+
+  // Fall back to best-effort parsing
   return lastSegment(slugOrPath);
 }
 

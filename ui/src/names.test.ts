@@ -61,11 +61,11 @@ describe("displayAgent (root precedence chain)", () => {
     expect(displayAgent(agent, "/home/user/kersy")).toBe("Session in kersy");
   });
 
-  it("uses projectPath parameter when project path is not available", () => {
+  it("prefers projectPath parameter over a.project when provided", () => {
     const agent = rootAgent({
       description: "",
       currentActivity: "",
-      project: "",
+      project: "/ignored/project",
     });
     expect(displayAgent(agent, "/some/workspace/myproject")).toBe(
       "Session in myproject"
@@ -87,6 +87,19 @@ describe("displayAgent (root precedence chain)", () => {
     expect(result).not.toContain(agent.id);
     expect(result).not.toContain("sess-123");
   });
+
+  it("returns trimmed description (whitespace stripped)", () => {
+    const agent = rootAgent({ description: "  Analyzing code  " });
+    expect(displayAgent(agent)).toBe("Analyzing code");
+  });
+
+  it("trims description before checking if empty", () => {
+    const agent = rootAgent({
+      description: "   ",
+      currentActivity: "Running tests",
+    });
+    expect(displayAgent(agent)).toBe("Running tests");
+  });
 });
 
 describe("displayAgent (subagent precedence chain)", () => {
@@ -105,6 +118,21 @@ describe("displayAgent (subagent precedence chain)", () => {
     const result = displayAgent(agent);
     expect(result).not.toContain(agent.id);
     expect(result).not.toContain("sess-123/agent-abc");
+  });
+
+  it("returns trimmed description (whitespace stripped)", () => {
+    const agent = subagent({
+      description: "  Verify validation  ",
+    });
+    expect(displayAgent(agent)).toBe("Verify validation");
+  });
+
+  it("trims description before checking if empty", () => {
+    const agent = subagent({
+      description: "   ",
+      agentType: "code-reviewer",
+    });
+    expect(displayAgent(agent)).toBe("code-reviewer");
   });
 });
 
@@ -131,6 +159,33 @@ describe("displayProject", () => {
 
   it("handles trailing slashes", () => {
     expect(displayProject("/home/user/kersy/")).toBe("kersy");
+  });
+
+  it("resolves slug via projectDirs for hyphenated folder names", () => {
+    const projectDirs = [
+      { slug: "-home-u-cs-ai-platform", path: "/home/u/cs-ai-platform" },
+    ];
+    expect(displayProject("-home-u-cs-ai-platform", projectDirs)).toBe(
+      "cs-ai-platform"
+    );
+  });
+
+  it("uses best-effort parsing for ambiguous slug without projectDirs", () => {
+    // Without projectDirs, slug "-Users-x-cs-ai-platform" is ambiguous.
+    // Best-effort splits and takes last segment, which may be wrong.
+    // This test documents the limitation.
+    const result = displayProject("-Users-x-cs-ai-platform");
+    expect(result).toBeTruthy(); // Assert it returns something, but acknowledge ambiguity
+    // Result could be "platform" or "cs-ai-platform" without the real path
+  });
+
+  it("falls back to best-effort when slug not found in projectDirs", () => {
+    const projectDirs = [
+      { slug: "-home-u-other", path: "/home/u/other" },
+    ];
+    // Slug not in projectDirs, should fall back to best-effort parsing
+    const result = displayProject("-home-u-cs-ai-platform", projectDirs);
+    expect(result).toBeTruthy();
   });
 });
 
