@@ -34,4 +34,17 @@ describe("Store", () => {
     s.apply({ event: "discoveryDone", data: { roots: ["/h/.claude"], projects: 3, sessions: 12 } });
     expect(s.discovery!.sessions).toBe(12);
   });
+
+  it("includes projectDirs when provided", () => {
+    const s = new Store();
+    const projectDirs = [
+      { slug: "-home-user-kersy", path: "/home/user/kersy", exists: true },
+      { slug: "-home-user-workspace", path: "/home/user/workspace", exists: false },
+    ];
+    s.apply({
+      event: "discoveryDone",
+      data: { roots: ["/h/.claude"], projects: 2, sessions: 5, projectDirs },
+    });
+    expect(s.discovery!.projectDirs).toEqual(projectDirs);
+  });
 });

@@ -3,16 +3,23 @@ export interface AgentView { id: string; sessionId: string; project: string; too
   currentActivity: string; contextTokens: number; filesTouched: string[];
   verificationRuns: number; lastActivityMs: number; stub: boolean; }
 export interface TaskView { id: string; subject: string; status: string; blockedBy: string[]; }
+export interface DiscoveryDone {
+  roots: string[];
+  projects: number;
+  sessions: number;
+  projectDirs?: Array<{ slug: string; path: string; exists: boolean }>;
+}
+
 export type MapEventMsg =
   | { event: "agentUpserted"; data: AgentView }
   | { event: "tasksUpserted"; data: { sessionId: string; tasks: TaskView[] } }
   | { event: "agentRemoved"; data: { id: string } }
-  | { event: "discoveryDone"; data: { roots: string[]; projects: number; sessions: number } };
+  | { event: "discoveryDone"; data: DiscoveryDone };
 
 export class Store {
   agents = new Map<string, AgentView>();
   tasks = new Map<string, TaskView[]>();
-  discovery: { roots: string[]; projects: number; sessions: number } | null = null;
+  discovery: DiscoveryDone | null = null;
   onchange: (() => void) | null = null;
 
   apply(msg: MapEventMsg): void {
