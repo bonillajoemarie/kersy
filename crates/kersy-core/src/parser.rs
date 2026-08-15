@@ -26,7 +26,9 @@ pub fn parse_line(line: &str) -> Vec<Fact> {
     let mut facts = Vec::new();
 
     if v["type"] == "ai-title" {
-        if let Some(t) = v["title"].as_str() { facts.push(Fact::Title(t.to_string())); }
+        if let Some(t) = v["aiTitle"].as_str().or_else(|| v["title"].as_str()) {
+            facts.push(Fact::Title(t.to_string()));
+        }
     }
     if let Some(out) = v["toolUseResult"]["stdout"].as_str() {
         facts.push(Fact::ToolResult { stdout: clip(out, 200) });
@@ -97,6 +99,15 @@ mod tests {
     }
 
     #[test]
+    fn title_parses_real_aititle_key() {
+        let line = r#"{"type":"ai-title","aiTitle":"Real Session"}"#;
+        match &parse_line(line)[0] {
+            Fact::Title(t) => assert_eq!(t, "Real Session"),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
     fn labels_are_clipped_to_200_chars() {
         let long = "x".repeat(500);
         let line = format!(r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","name":"Bash","input":{{"command":"{long}"}}}}]}}}}"#);
@@ -109,6 +120,20 @@ mod tests {
     #[test]
     fn fixture_file_parses_without_panic() {
         let data = include_str!("../tests/fixtures/main_lines.jsonl");
-        for l in data.lines() { let _ = parse_line(l); }
+        let mut has_title = false;
+        let mut has_tool_result = false;
+        for l in data.lines() {
+            let facts = parse_line(l);
+            for fact in &facts {
+                if matches!(fact, Fact::Title(_)) {
+                    has_title = true;
+                }
+                if matches!(fact, Fact::ToolResult { .. }) {
+                    has_tool_result = true;
+                }
+            }
+        }
+        assert!(has_title, "fixture must contain at least one Title fact");
+        assert!(has_tool_result, "fixture must contain at least one ToolResult fact");
     }
 }
