@@ -3,6 +3,7 @@ import { renderDrillin, renderTasks } from "./panels";
 import { createRenderer, STATUS_COLORS, type DrawEdge, type DrawNode, type Renderer } from "./render/renderer";
 import { Sim } from "./sim";
 import { Store, type MapEventMsg } from "./store";
+import { ACTIVE_MS, IDLE_MS, statusOf } from "./status";
 
 const store = new Store();
 const graphCanvas = document.querySelector<HTMLCanvasElement>("#graph")!;
@@ -23,7 +24,7 @@ let paused = false;
 let selected: string | null = null;
 
 const visible = () => store.nodes().filter((n) =>
-  (!projectFilter || n.project === projectFilter) && (!liveOnly || n.status !== "stale"));
+  (!projectFilter || n.project === projectFilter) && (!liveOnly || statusOf(n) !== "stale"));
 
 const sim = new Sim(() => {});
 let frame = 0;
@@ -31,6 +32,29 @@ let frame = 0;
 // `running` before its declaration point); hoisting `let` would still throw a TDZ error at
 // runtime, so the declaration is moved above the function that uses it.
 let running = false;
+// The single armed one-shot repaint timer (Finding 1b): when the rAF loop stops with some node
+// still active/idle, a future status transition is coming (active -> idle -> stale) even though
+// nothing else changes. Rather than a polling interval, we compute the earliest such transition
+// and arm exactly one setTimeout to wake() at that instant. Re-armed only when the loop stops
+// again; cleared/re-armed inside wake() so back-to-back wakes never stack duplicate timers.
+let repaintTimer: ReturnType<typeof setTimeout> | null = null;
+function armRepaintTimer() {
+  if (repaintTimer !== null) { clearTimeout(repaintTimer); repaintTimer = null; }
+  const now = Date.now();
+  let earliest = Infinity;
+  for (const n of visible()) {
+    if (n.stub || !n.lastActivityMs) continue;
+    const age = now - n.lastActivityMs;
+    // next threshold this node will cross, if any
+    let next = Infinity;
+    if (age < ACTIVE_MS) next = ACTIVE_MS - age;
+    else if (age < IDLE_MS) next = IDLE_MS - age;
+    if (next < earliest) earliest = next;
+  }
+  if (earliest < Infinity) {
+    repaintTimer = setTimeout(() => { repaintTimer = null; wake(); }, earliest + 50);
+  }
+}
 function loop() {
   frame++;
   if (!paused && !sim.settled()) sim.tickOnce();
@@ -38,10 +62,13 @@ function loop() {
   // keep animating while (unpaused and unsettled) or anything is pulsing, else stop — 0%-idle
   // rule. `paused` must gate the continue condition too, not just tickOnce(): otherwise pausing
   // before the sim settles leaves rAF spinning forever on frames that do nothing but redraw.
-  if ((!paused && !sim.settled()) || visible().some((n) => n.status === "active")) requestAnimationFrame(loop);
-  else running = false;
+  if ((!paused && !sim.settled()) || visible().some((n) => statusOf(n) === "active")) requestAnimationFrame(loop);
+  else { running = false; armRepaintTimer(); }
 }
-function wake() { if (!running) { running = true; requestAnimationFrame(loop); } }
+function wake() {
+  if (repaintTimer !== null) { clearTimeout(repaintTimer); repaintTimer = null; }
+  if (!running) { running = true; requestAnimationFrame(loop); }
+}
 
 function draw() {
   if (!renderer) return;
@@ -51,9 +78,10 @@ function draw() {
   for (const n of visible()) {
     const p = pos.get(n.id); if (!p) continue;
     const isSession = !n.id.includes("/");
-    const pulse = n.status === "active" ? (Math.sin(frame / 12) + 1) / 2 : 0;
-    nodes.push({ x: p.x, y: p.y, radius: isSession ? 14 : 8, color: STATUS_COLORS[n.status], pulse });
-    labels.push({ x: p.x, y: p.y, text: n.status === "active" ? n.currentActivity : (n.description || n.id), dim: n.status === "stale" });
+    const st = statusOf(n);
+    const pulse = st === "active" ? (Math.sin(frame / 12) + 1) / 2 : 0;
+    nodes.push({ x: p.x, y: p.y, radius: isSession ? 14 : 8, color: STATUS_COLORS[st], pulse });
+    labels.push({ x: p.x, y: p.y, text: st === "active" ? n.currentActivity : (n.description || n.id), dim: st === "stale" });
   }
   const edges: DrawEdge[] = store.edges().flatMap((e) => {
     const a = pos.get(e.from), b = pos.get(e.to);
