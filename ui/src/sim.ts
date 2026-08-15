@@ -6,8 +6,11 @@ interface SimLink { source: string; target: string; }
 export class Sim {
   private nodes: SimNode[] = [];
   private sim: Simulation<SimNode, SimLink>;
+  private edgeKey = "";
 
   constructor(onTick: () => void) {
+    // onTick is unused under the no-restart() design: main.ts drives frames itself
+    // via its own requestAnimationFrame loop and calls tickOnce()/draw() directly.
     this.sim = forceSimulation<SimNode>([])
       .force("charge", forceManyBody().strength(-120))
       .force("center", forceCenter(0, 0))
@@ -18,8 +21,14 @@ export class Sim {
 
   sync(ids: string[], edges: Array<{ from: string; to: string }>): void {
     const byId = new Map(this.nodes.map((n) => [n.id, n]));
-    const changed = ids.length !== this.nodes.length || ids.some((id) => !byId.has(id));
-    this.nodes = ids.map((id) => byId.get(id) ?? { id, x: Math.cos(ids.length) * 50, y: Math.sin(ids.length) * 50 });
+    const nodesChanged = ids.length !== this.nodes.length || ids.some((id) => !byId.has(id));
+    const edgeKey = edges
+      .map((e) => `${e.from}>${e.to}`)
+      .sort()
+      .join("|");
+    const changed = nodesChanged || edgeKey !== this.edgeKey;
+    this.edgeKey = edgeKey;
+    this.nodes = ids.map((id, i) => byId.get(id) ?? { id, x: Math.cos(i) * 50, y: Math.sin(i) * 50 });
     this.sim.nodes(this.nodes);
     (this.sim.force("link") as ReturnType<typeof forceLink>)!
       .links(edges.map((e) => ({ source: e.from, target: e.to })));

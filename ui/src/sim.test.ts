@@ -19,4 +19,24 @@ describe("Sim", () => {
     for (let i = 0; i < 500; i++) s.tickOnce();
     expect(s.settled()).toBe(true);    // alpha decayed below min
   });
+
+  it("reheats on edge-only changes (same node set, new edge)", () => {
+    const s = new Sim(() => {});
+    s.sync(["a", "b"], []);
+    for (let i = 0; i < 500; i++) s.tickOnce();
+    expect(s.settled()).toBe(true);
+    s.sync(["a", "b"], [{ from: "a", to: "b" }]);
+    expect(s.settled()).toBe(false);
+  });
+
+  it("spreads spawn positions by index instead of coincident placement", () => {
+    const s = new Sim(() => {});
+    s.sync(["a", "b", "c"], []);
+    const pos = s.positions();
+    const a = pos.get("a")!;
+    const b = pos.get("b")!;
+    const c = pos.get("c")!;
+    const allEqual = a.x === b.x && a.y === b.y && b.x === c.x && b.y === c.y;
+    expect(allEqual).toBe(false);
+  });
 });
