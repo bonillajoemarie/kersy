@@ -234,3 +234,54 @@ code, .cmd {
   justify-content: center; gap: var(--space-2); text-align: center; pointer-events: none; }
 .empty-state-title { font-size: 16px; color: var(--text); }
 .empty-state-roots { color: var(--stale); font-size: 11px; }
+
+/* ---- Project Explorer ---- */
+
+.explorer-empty { padding: var(--space-3) var(--space-2); color: var(--stale); font-size: 12px; line-height: 1.5; }
+
+.explorer-row, .explorer-project-header, .explorer-group-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  background: transparent;
+  color: var(--text);
+  border: none;
+  text-align: left;
+  font: 12px var(--font-sans);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease);
+}
+.explorer-row:hover, .explorer-project-header:hover, .explorer-group-header:hover { background: var(--panel-hi); transition: none; }
+.explorer-row:focus-visible, .explorer-project-header:focus-visible, .explorer-group-header:focus-visible {
+  outline: none; box-shadow: inset 0 0 0 1px var(--accent);
+}
+.explorer-row.dim, .dim { color: var(--stale); }
+.explorer-project-header.dim { cursor: default; }
+.explorer-project-header:disabled { cursor: default; }
+
+.explorer-caret { display: inline-block; width: 1em; color: var(--stale); flex: none; }
+.explorer-name { font-weight: 500; color: var(--text); }
+.explorer-group-header { padding-left: var(--space-3); text-transform: uppercase; font-size: 11px; letter-spacing: 0.04em; color: var(--stale); }
+.explorer-dir-row { padding-left: var(--space-4); }
+.explorer-dir .explorer-row { padding-left: calc(var(--space-4) + var(--space-2)); }
+.explorer-special-dir .chip { margin-left: auto; }
+.explorer-subdir .explorer-dir { padding-left: var(--space-2); }
+
+.explorer-session { padding-left: var(--space-4); }
+.explorer-session-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer-session-age { margin-left: auto; font-size: 11px; flex: none; }
+
+.explorer-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.explorer-dot.active { background: var(--active); }
+.explorer-dot.idle { background: var(--idle); }
+.explorer-dot.stale { background: var(--stale); }
+
+/* ---- Prompt bar ---- */
+
+#promptbar select { flex: none; max-width: 180px; }
+#promptbar input { flex: 1; }
+#promptbar select:disabled, #promptbar input:disabled, #promptbar button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.status-error { color: var(--error); }

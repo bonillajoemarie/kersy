@@ -1,5 +1,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { Explorer } from "./explorer";
 import { renderDrillin, renderTasks } from "./panels";
+import { PromptBar } from "./promptbar";
 import { createRenderer, STATUS_COLORS, type DrawEdge, type DrawNode, type Renderer } from "./render/renderer";
 import { Sim } from "./sim";
 import { Store, type MapEventMsg } from "./store";
@@ -22,6 +24,26 @@ let projectFilter = "";
 let liveOnly = false;
 let paused = false;
 let selected: string | null = null;
+
+function setStatus(text: string, isError = false): void {
+  const bar = document.querySelector<HTMLElement>("#statusbar")!;
+  bar.textContent = text;
+  bar.classList.toggle("status-error", isError);
+}
+
+const explorer = new Explorer(document.querySelector("#explorer")!, (id) => focusSession(id));
+const promptBar = new PromptBar(document.querySelector<HTMLFormElement>("#promptbar")!, setStatus);
+
+// Direct camera snap for now (Task 5 brings the lerp-toward-target mechanism that would smooth
+// this into a glide); selecting + opening the drill-in is the same path the map's own click
+// handler uses below.
+function focusSession(id: string): void {
+  const pos = sim.positions().get(id);
+  if (pos) { cam.x = pos.x; cam.y = pos.y; }
+  selected = id;
+  void openDrillin(id);
+  wake();
+}
 
 const visible = () => store.nodes().filter((n) =>
   (!projectFilter || n.project === projectFilter) && (!liveOnly || statusOf(n) !== "stale"));
@@ -136,6 +158,8 @@ store.onchange = () => {
   const ids = visible().map((n) => n.id);
   sim.sync(ids, store.edges().filter((e) => ids.includes(e.from) && ids.includes(e.to)));
   renderTasks(store, document.querySelector("#tasks")!, (sid) => { selected = sid; openDrillin(sid); });
+  explorer.render(store);
+  promptBar.refresh(store);
   refreshTopbar(); renderEmptyState(); wake();
   // keep the open drill-in panel live: without this it freezes at whatever it showed at the
   // moment of the click until the user re-clicks the node, even as new events/context/files
@@ -231,7 +255,7 @@ function refreshTopbar() {
 
 async function updateRss() {
   const kb = await invoke<number>("rust_rss_kb");
-  document.querySelector("#statusbar")!.textContent = `Kersy — rust rss ${(kb / 1024).toFixed(1)} MB`;
+  setStatus(`Kersy — rust rss ${(kb / 1024).toFixed(1)} MB`);
   setTimeout(updateRss, 10_000);   // permitted timer: 1 cheap IPC / 10 s for the RSS budget display
 }
 
