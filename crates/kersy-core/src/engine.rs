@@ -103,19 +103,39 @@ impl Engine {
     pub fn on_path_removed(&mut self, path: &Path) -> Vec<MapEvent> {
         self.tailer.forget(path);
         let Some(root) = self.root_of(path) else { return vec![] };
-        match classify(&root.path.clone(), path) {
+        match classify(&root.path, path) {
             WatchedPath::MainTranscript { session, .. } => {
                 // remove root and all subagents of the session
                 let ids: Vec<String> = self.world.agents.keys()
                     .filter(|k| **k == session || k.starts_with(&format!("{session}/")))
                     .cloned().collect();
-                for id in &ids { self.world.agents.remove(id); }
+                for id in &ids {
+                    if let Some(a) = self.world.agents.remove(id) {
+                        // forget the tailer state for subagent transcripts too, so a
+                        // re-created session starts re-reading from byte 0
+                        if let Some(agent) = id.strip_prefix(&format!("{session}/")) {
+                            let tp = root.path.join("projects").join(&a.project).join(&session)
+                                .join("subagents").join(format!("agent-{agent}.jsonl"));
+                            self.tailer.forget(&tp);
+                        }
+                    }
+                }
                 ids.into_iter().map(|id| MapEvent::AgentRemoved { id }).collect()
             }
             WatchedPath::SubagentTranscript { session, agent, .. } => {
                 let id = Self::agent_id(&session, Some(&agent));
                 self.world.agents.remove(&id);
                 vec![MapEvent::AgentRemoved { id }]
+            }
+            WatchedPath::TaskFile { session } => {
+                let Some(dir) = path.parent() else { return vec![] };
+                let tasks = read_task_dir(dir);
+                if dir.exists() {
+                    self.world.tasks.insert(session.clone(), tasks.clone());
+                } else {
+                    self.world.tasks.remove(&session);
+                }
+                vec![MapEvent::TasksUpserted { session_id: session, tasks }]
             }
             _ => vec![],
         }
@@ -318,5 +338,55 @@ mod tests {
         e.on_path_changed(&p, SystemTime::now());
         let evs = e.on_path_removed(&p);
         assert!(matches!(&evs[0], MapEvent::AgentRemoved { id } if id == "sess-1"));
+    }
+
+    #[test]
+    fn session_removal_forgets_subagent_tailer_state() {
+        let (d, root) = fake_root();
+        let p = d.path().join("projects/-p/sess-1.jsonl");
+        std::fs::write(&p, "{}\n").unwrap();
+        let sub = d.path().join("projects/-p/sess-1/subagents/agent-a1.jsonl");
+        let first_line = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/first.rs"}}]}}"#;
+        std::fs::write(&sub, format!("{first_line}\n")).unwrap();
+        let mut e = Engine::new(vec![root]);
+        let now = SystemTime::now();
+        e.on_path_changed(&p, now);
+        e.on_path_changed(&sub, now); // consumes the first line, offset advances past it
+
+        e.on_path_removed(&p); // should remove agents AND forget the subagent tailer offset
+
+        // append a second line; if the offset was forgotten, re-reading starts from byte 0
+        // and both lines (including the first) should be visible again.
+        let second_line = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/second.rs"}}]}}"#;
+        std::fs::write(&sub, format!("{first_line}\n{second_line}\n")).unwrap();
+        let evs = e.on_path_changed(&sub, now);
+        let snap = evs.iter().find_map(|ev| match ev { MapEvent::AgentUpserted(s) => Some(s), _ => None }).unwrap();
+        assert!(snap.files_touched.contains(&"/first.rs".to_string()), "{:?}", snap.files_touched);
+        assert!(snap.files_touched.contains(&"/second.rs".to_string()), "{:?}", snap.files_touched);
+    }
+
+    #[test]
+    fn task_file_deletion_updates_board() {
+        let (d, root) = fake_root();
+        let t1 = d.path().join("tasks/sess-1/15.json");
+        let t2 = d.path().join("tasks/sess-1/16.json");
+        std::fs::write(&t1, include_str!("../tests/fixtures/task.json")).unwrap();
+        std::fs::write(&t2, r#"{"id":"16","subject":"PRA-2: other","description":"","status":"pending","blocks":[],"blockedBy":[]}"#).unwrap();
+        let mut e = Engine::new(vec![root]);
+        let evs = e.on_path_changed(&t1, SystemTime::now());
+        match &evs[0] {
+            MapEvent::TasksUpserted { tasks, .. } => assert_eq!(tasks.len(), 2),
+            other => panic!("{other:?}"),
+        }
+        std::fs::remove_file(&t2).unwrap();
+        let evs = e.on_path_removed(&t2);
+        match &evs[0] {
+            MapEvent::TasksUpserted { session_id, tasks } => {
+                assert_eq!(session_id, "sess-1");
+                assert_eq!(tasks.len(), 1);
+                assert_eq!(tasks[0].id, "15");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }
