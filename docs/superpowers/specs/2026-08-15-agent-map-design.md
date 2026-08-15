@@ -87,7 +87,7 @@ agent-map/
 
 - `tauri build` → `.rpm` + AppImage on this Fedora machine now.
 - Same repo produces `.msi` (Windows) and `.dmg` (macOS) when built on those OSes; CI matrix later if wanted.
-- App id `ph.flowerstore.kersy`, product name "Kersy", icon in launcher, single ~5–10 MB binary using the OS webview.
+- App id `dev.jmbonilla.kersy` (personal project — no company branding anywhere in the app, ids, or installers), product name "Kersy", icon in launcher, single ~5–10 MB binary using the OS webview.
 
 ## Error handling
 
