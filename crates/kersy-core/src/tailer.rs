@@ -35,7 +35,7 @@ impl Tailer {
         f.read_to_end(&mut buf)?; // only NEW bytes as bytes
         st.offset = len;
 
-        let mut chunk = st.partial.clone();
+        let mut chunk = std::mem::take(&mut st.partial);
         chunk.extend_from_slice(&buf);
         let mut lines: Vec<String> = Vec::new();
         let mut rest = chunk.as_slice();
@@ -90,17 +90,23 @@ mod tests {
         let mut f = std::fs::File::create(&p).unwrap();
         let mut t = Tailer::new();
 
-        // "héllo 🚀\n" as bytes
+        // "héllo 🚀\n" as bytes: 12 bytes total
+        // "héllo " is 7 bytes (h é l l o space)
+        // "🚀" is 4 bytes: 0xF0 0x9F 0x9A 0x80
+        // "\n" is 1 byte
         let full_line = "héllo 🚀\n";
         let full_bytes = full_line.as_bytes();
 
-        // Split mid-character in the emoji (🚀 is 4 bytes in UTF-8: 0xF0 0x9F 0x9A 0x80)
-        // "héllo 🚀" is 12 bytes, let's write only first 11 bytes (cutting the emoji mid-sequence)
-        let split_at = 11; // This cuts the 4-byte emoji in half
+        // Split at byte 9: after 2 bytes of the 4-byte emoji sequence
+        // This ensures first_part ends with incomplete UTF-8 sequence
+        let split_at = 9;
         let first_part = &full_bytes[..split_at];
         let second_part = &full_bytes[split_at..];
 
-        // Write first part (incomplete emoji at end)
+        // Verify that first_part is invalid UTF-8 (mid-character)
+        assert!(std::str::from_utf8(first_part).is_err(), "Split must be mid-character");
+
+        // Write first part (incomplete emoji at end, no newline)
         f.write_all(first_part).unwrap();
         f.flush().unwrap();
 
@@ -108,7 +114,7 @@ mod tests {
         let lines1 = t.read_new_lines(&p).unwrap();
         assert!(lines1.is_empty(), "Should have no complete lines when emoji is mid-sequence");
 
-        // Write the rest of the line (completing the emoji)
+        // Write the rest of the line (completing the emoji and adding newline)
         f.write_all(second_part).unwrap();
         f.flush().unwrap();
 
