@@ -14,11 +14,24 @@ pub struct Engine {
     world: World,
     tailer: Tailer,
     roots: Vec<DataRoot>,
+    skipped: std::collections::HashMap<PathBuf, u32>,
 }
 
 impl Engine {
     pub fn new(roots: Vec<DataRoot>) -> Self {
-        Self { world: World::default(), tailer: Tailer::new(), roots }
+        Self { world: World::default(), tailer: Tailer::new(), roots, skipped: std::collections::HashMap::new() }
+    }
+
+    /// Number of lines skipped as malformed (non-empty, fails to parse as JSON
+    /// at all, and yields zero Facts) for the given transcript path.
+    pub fn skipped(&self, path: &Path) -> u32 {
+        self.skipped.get(path).copied().unwrap_or(0)
+    }
+
+    fn record_line(&mut self, path: &Path, line: &str, facts: &[Fact]) {
+        if facts.is_empty() && serde_json::from_str::<serde::de::IgnoredAny>(line).is_err() {
+            *self.skipped.entry(path.to_path_buf()).or_insert(0) += 1;
+        }
     }
 
     fn agent_id(session: &str, agent: Option<&str>) -> String {
@@ -62,17 +75,30 @@ impl Engine {
                 Self::ensure_agent(&mut self.world, &id, &session, &project, tool);
                 if self.world.agents[&id].stub { return vec![] } // stubs parse lazily
                 let Ok(lines) = self.tailer.read_new_lines(path) else { return vec![] };
+                for l in &lines {
+                    let facts = parse_line(l);
+                    self.record_line(path, l, &facts);
+                    let a = self.world.agents.get_mut(&id).unwrap();
+                    Self::apply_facts(a, facts, now);
+                }
                 let a = self.world.agents.get_mut(&id).unwrap();
-                for l in &lines { Self::apply_facts(a, parse_line(l), now); }
                 vec![MapEvent::AgentUpserted(a.snapshot(status::derive(a.last_activity, now)))]
             }
             WatchedPath::SubagentTranscript { project, session, agent } => {
                 let id = Self::agent_id(&session, Some(&agent));
                 Self::ensure_agent(&mut self.world, &id, &session, &project, tool);
                 let Ok(lines) = self.tailer.read_new_lines(path) else { return vec![] };
+                {
+                    let a = self.world.agents.get_mut(&id).unwrap();
+                    if a.parent_id.is_none() { a.parent_id = Some(session.clone()); } // default: child of session
+                }
+                for l in &lines {
+                    let facts = parse_line(l);
+                    self.record_line(path, l, &facts);
+                    let a = self.world.agents.get_mut(&id).unwrap();
+                    Self::apply_facts(a, facts, now);
+                }
                 let a = self.world.agents.get_mut(&id).unwrap();
-                if a.parent_id.is_none() { a.parent_id = Some(session.clone()); } // default: child of session
-                for l in &lines { Self::apply_facts(a, parse_line(l), now); }
                 vec![MapEvent::AgentUpserted(a.snapshot(status::derive(a.last_activity, now)))]
             }
             WatchedPath::SubagentMeta { project, session, agent } => {
@@ -141,6 +167,33 @@ impl Engine {
         }
     }
 
+    /// Like `on_path_changed`, but used only for the initial-scan replay: once
+    /// the file's lines are applied (which, via `apply_facts`, stamps
+    /// `last_activity` as `now` — the scan's wall-clock time), the affected
+    /// agent's `last_activity` is overwritten with the transcript file's own
+    /// mtime (clamped to `now`, since filesystem clocks can drift ahead).
+    /// Without this, every session touched by the initial scan — even one
+    /// whose last real activity was days ago — would read as freshly active,
+    /// which is exactly the 0%-idle-at-boot bug this exists to prevent.
+    fn on_path_changed_anchored(&mut self, path: &Path, now: SystemTime) -> Vec<MapEvent> {
+        let events = self.on_path_changed(path, now);
+        let Ok(meta) = std::fs::metadata(path) else { return events };
+        let Ok(mtime) = meta.modified() else { return events };
+        let activity = if mtime > now { now } else { mtime };
+        events.into_iter().map(|ev| match ev {
+            MapEvent::AgentUpserted(snap) => {
+                match self.world.agents.get_mut(&snap.id) {
+                    Some(a) => {
+                        a.last_activity = activity;
+                        MapEvent::AgentUpserted(a.snapshot(status::derive(a.last_activity, now)))
+                    }
+                    None => MapEvent::AgentUpserted(snap),
+                }
+            }
+            other => other,
+        }).collect()
+    }
+
     pub fn initial_scan(&mut self, now: SystemTime) -> Vec<MapEvent> {
         let mut events = Vec::new();
         let mut sessions = 0u32;
@@ -168,11 +221,11 @@ impl Engine {
                             a.stub = true;
                             events.push(MapEvent::AgentUpserted(a.snapshot("stale")));
                         } else {
-                            events.extend(self.on_path_changed(&p, now));
+                            events.extend(self.on_path_changed_anchored(&p, now));
                             // also scan its subagents dir
                             let sub = proj.path().join(p.file_stem().unwrap()).join("subagents");
                             if let Ok(subs) = std::fs::read_dir(&sub) {
-                                for s in subs.flatten() { events.extend(self.on_path_changed(&s.path(), now)); }
+                                for s in subs.flatten() { events.extend(self.on_path_changed_anchored(&s.path(), now)); }
                             }
                         }
                     }
@@ -235,7 +288,9 @@ fn read_task_dir(dir: &Path) -> Vec<TaskSnapshot> {
             })
         })
         .collect();
-    out.sort_by(|a, b| a.id.cmp(&b.id));
+    // Numeric-aware: ids that parse as u64 sort by value ("2" < "10"); ids
+    // that don't parse fall back to lexical order.
+    out.sort_by_key(|t| (t.id.parse::<u64>().ok(), t.id.clone()));
     out
 }
 
@@ -330,6 +385,28 @@ mod tests {
     }
 
     #[test]
+    fn initial_scan_anchors_last_activity_to_file_mtime_not_scan_time() {
+        let (d, root) = fake_root();
+        let p = d.path().join("projects/-p/sess-1.jsonl");
+        std::fs::write(&p, concat!(
+            r#"{"type":"ai-title","title":"Old session"}"#, "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"echo hi"}}]}}"#, "\n",
+        )).unwrap();
+        // The file's real mtime is "now" (just written). Manufacture a scan
+        // time far past the active/idle window but well short of STUB_AGE,
+        // simulating a boot that happens long after the last real activity.
+        let scan_time = SystemTime::now() + Duration::from_secs(3600); // 1 hour
+        let mut e = Engine::new(vec![root]);
+        let evs = e.initial_scan(scan_time);
+        let snap = evs.iter().find_map(|ev| match ev {
+            MapEvent::AgentUpserted(s) if s.id == "sess-1" => Some(s),
+            _ => None,
+        }).unwrap();
+        assert!(!snap.stub);
+        assert_ne!(snap.status, "active", "status must decay based on file mtime, not scan wall-time");
+    }
+
+    #[test]
     fn removed_path_emits_agent_removed() {
         let (d, root) = fake_root();
         let p = d.path().join("projects/-p/sess-1.jsonl");
@@ -363,6 +440,37 @@ mod tests {
         let snap = evs.iter().find_map(|ev| match ev { MapEvent::AgentUpserted(s) => Some(s), _ => None }).unwrap();
         assert!(snap.files_touched.contains(&"/first.rs".to_string()), "{:?}", snap.files_touched);
         assert!(snap.files_touched.contains(&"/second.rs".to_string()), "{:?}", snap.files_touched);
+    }
+
+    #[test]
+    fn malformed_line_is_counted_as_skipped() {
+        let (d, root) = fake_root();
+        let p = d.path().join("projects/-p/sess-1.jsonl");
+        std::fs::write(&p, concat!(
+            r#"{"type":"ai-title","title":"Fine"}"#, "\n",
+            "not json at all {{{\n",
+            r#"{"type":"file-history-snapshot"}"#, "\n", // valid JSON, zero facts: NOT malformed
+        )).unwrap();
+        let mut e = Engine::new(vec![root]);
+        e.on_path_changed(&p, SystemTime::now());
+        assert_eq!(e.skipped(&p), 1);
+    }
+
+    #[test]
+    fn task_ids_sort_numerically_not_lexically() {
+        let (d, root) = fake_root();
+        let t1 = d.path().join("tasks/sess-1/2.json");
+        let t2 = d.path().join("tasks/sess-1/10.json");
+        std::fs::write(&t1, r#"{"id":"2","subject":"second","status":"pending","blockedBy":[]}"#).unwrap();
+        std::fs::write(&t2, r#"{"id":"10","subject":"tenth","status":"pending","blockedBy":[]}"#).unwrap();
+        let mut e = Engine::new(vec![root]);
+        let evs = e.on_path_changed(&t1, SystemTime::now());
+        match &evs[0] {
+            MapEvent::TasksUpserted { tasks, .. } => {
+                assert_eq!(tasks.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["2", "10"]);
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
