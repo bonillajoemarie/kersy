@@ -17,29 +17,44 @@ struct App {
     discovery_done: MapEvent,
 }
 
+/// Lock a `Mutex`, recovering the guard on poison instead of propagating the panic — a panicked
+/// command handler must not permanently wedge the watcher thread (or any other lock user) behind
+/// a poisoned mutex.
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 fn broadcast(channels: &Mutex<Vec<Channel<MapEvent>>>, events: &[MapEvent]) {
-    let mut chans = channels.lock().unwrap();
+    let mut chans = lock(channels);
     chans.retain(|c| events.iter().all(|e| c.send(e.clone()).is_ok()));
 }
 
 #[tauri::command]
 fn subscribe(state: State<'_, App>, on_event: Channel<MapEvent>) {
-    let snapshot = state.engine.lock().unwrap().full_snapshot(SystemTime::now());
+    // Hold the engine lock across the channels-lock acquisition and registration so the
+    // snapshot + DiscoveryDone send and the push onto `channels` are atomic with respect to the
+    // watcher thread (which always takes engine, then — only if there are events — channels).
+    // Same lock order here (engine, then channels), so no deadlock; without this, a watcher
+    // mutation+broadcast could land in the window between snapshotting and registering, and the
+    // new subscriber would miss it permanently.
+    let eng = lock(&state.engine);
+    let snapshot = eng.full_snapshot(SystemTime::now());
+    let mut chans = lock(&state.channels);
     for ev in &snapshot {
         let _ = on_event.send(ev.clone());
     }
     let _ = on_event.send(state.discovery_done.clone());
-    state.channels.lock().unwrap().push(on_event);
+    chans.push(on_event);
 }
 
 #[tauri::command]
 fn get_agent_events(state: State<'_, App>, agent_id: String) -> Vec<AgentEventDto> {
-    state.engine.lock().unwrap().agent_events(&agent_id)
+    lock(&state.engine).agent_events(&agent_id)
 }
 
 #[tauri::command]
 fn open_stub(state: State<'_, App>, session_id: String) {
-    let evs = state.engine.lock().unwrap().parse_stub(&session_id, SystemTime::now());
+    let evs = lock(&state.engine).parse_stub(&session_id, SystemTime::now());
     broadcast(&state.channels, &evs);
 }
 
@@ -91,7 +106,7 @@ pub fn run() {
                 for change in rx {
                     let state: State<App> = handle.state();
                     let evs = {
-                        let mut eng = state.engine.lock().unwrap();
+                        let mut eng = lock(&state.engine);
                         match change {
                             FsChange::Changed(p) => eng.on_path_changed(&p, SystemTime::now()),
                             FsChange::Removed(p) => eng.on_path_removed(&p),
