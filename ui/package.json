@@ -1,0 +1,20 @@
+{
+  "name": "kersy-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "d3-force": "^3"
+  },
+  "devDependencies": {
+    "@types/d3-force": "^3",
+    "typescript": "^5",
+    "vite": "^7",
+    "vitest": "^3"
+  }
+}
