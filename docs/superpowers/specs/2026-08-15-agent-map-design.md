@@ -1,8 +1,9 @@
-# Agent Map — design spec
+# Kersy — Phase 1 (Agent Map) design spec
 
+**App name:** Kersy (owner-chosen, 2026-08-15)
 **Date:** 2026-08-15
 **Status:** Approved by owner (Joe Marie Bonilla)
-**Repo:** `~/workspace/agent-map` (standalone personal tool; not part of `www/`)
+**Repo:** `~/workspace/kersy` (standalone personal tool; not part of `www/`)
 
 ## What it is
 
@@ -50,7 +51,7 @@ agent-map/
 ### agent-map-core (Rust library crate)
 
 - **Discovery module:** implements the launch-time automap above; returns the set of valid data roots. Unit-tested with fake home dirs.
-- **Watcher:** `notify` (recommended-watcher) over `<root>/projects` and `<root>/tasks` for every discovered root, debounced ~250 ms.
+- **Watcher:** `notify-debouncer-full` (official notify companion crate — merges rename pairs, dedups creates, suppresses modify-after-create) over `<root>/projects` and `<root>/tasks` for every discovered root; absolute paths; watch the parent roots recursively (Linux/inotify ends a watch when the watched object is deleted, so never watch individual session files); `EventKindMask::CORE` filtering. Debounce timeout ~250 ms.
 - **Tailer:** per-file byte offset map; on change, read only the new bytes, split lines, `serde_json` each. A trailing partial line is buffered until its newline arrives; a malformed complete line is skipped and counted — never fatal.
 - **State model** (single source of truth, behind `tokio::sync::RwLock`):
   - `Project { slug, path, sessions }`
@@ -67,9 +68,10 @@ agent-map/
 
 ### Tauri shell (src-tauri)
 
-- Subscribes to the core's channel; forwards diffs to the webview via `emit` (Tauri events).
+- Core watcher spawned in the `.setup()` hook via `tauri::async_runtime::spawn`; state registered with `.manage()` (no `Arc` — Tauri owns sharing); async commands use `tokio::sync::Mutex` and return `Result`.
+- Diff stream delivered over a `tauri::ipc::Channel<MapEvent>` (the documented streaming mechanism) with a serde-tagged event enum; one-off notices (discovery results, watcher-degraded) via global `app.emit`.
 - Commands (invoked from UI): `get_full_state()`, `get_agent_events(agent_id)` (ring buffer dump), `parse_stale_session(uuid)`.
-- No network access; CSP locked down; everything bundled.
+- No network access; everything bundled. CSP set explicitly in `tauri.conf.json`: `default-src 'self'; connect-src ipc: http://ipc.localhost`. Capabilities: `core:default` only — no shell/http/fs plugins exposed to the frontend; all filesystem access stays in our own Rust commands.
 
 ### UI (webview)
 
@@ -85,7 +87,7 @@ agent-map/
 
 - `tauri build` → `.rpm` + AppImage on this Fedora machine now.
 - Same repo produces `.msi` (Windows) and `.dmg` (macOS) when built on those OSes; CI matrix later if wanted.
-- App id `ph.flowerstore.agentmap`, icon in launcher, single ~5–10 MB binary using the OS webview.
+- App id `ph.flowerstore.kersy`, product name "Kersy", icon in launcher, single ~5–10 MB binary using the OS webview.
 
 ## Error handling
 
