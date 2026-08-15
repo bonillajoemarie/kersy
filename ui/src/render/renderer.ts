@@ -16,5 +16,8 @@ export const STATUS_COLORS: Record<string, [number, number, number]> = {
 
 export function createRenderer(canvas: HTMLCanvasElement): Renderer {
   const gl = canvas.getContext("webgl2", { antialias: true });
-  return gl ? new GlRenderer(gl) : new CanvasRenderer(canvas.getContext("2d")!);
+  if (gl) return new GlRenderer(gl);
+  const ctx2d = canvas.getContext("2d");
+  if (ctx2d) return new CanvasRenderer(ctx2d);
+  throw new Error("Kersy: no rendering context available (webgl2 and 2d both failed)");
 }
