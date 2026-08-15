@@ -16,6 +16,9 @@ const OUTSIDE_PROJECTS: &str = "Path is outside your projects";
 /// gate for `list_dir`/`run_prompt` — canonicalize resolves `..` components
 /// and symlinks alike, so a symlink inside a project that points outside it
 /// is rejected exactly like a literal `../` escape would be.
+// TOCTOU note: the path is canonicalized here but used (read_dir'd, or set as a spawned
+// process's cwd) slightly later. Accepted: single-user desktop app, no privilege boundary
+// crossed between the check and the use.
 fn guard_path(path: &Path, project_paths: &[PathBuf]) -> Result<PathBuf, String> {
     let real = path
         .canonicalize()
@@ -25,6 +28,14 @@ fn guard_path(path: &Path, project_paths: &[PathBuf]) -> Result<PathBuf, String>
     } else {
         Err(OUTSIDE_PROJECTS.to_string())
     }
+}
+
+/// Builds the arg vector for the `claude` CLI invocation. The `--` separator is load-bearing:
+/// `-p` is a boolean flag to the CLI's arg parser (commander.js), and without a separator a
+/// prompt beginning with `-` (e.g. `--dangerously-skip-permissions ...`) would be parsed as a
+/// flag instead of the positional prompt string.
+fn prompt_args(prompt: &str) -> [&str; 3] {
+    ["-p", "--", prompt]
 }
 
 /// Lists a directory's immediate children, dirs-first then case-insensitive
@@ -45,7 +56,7 @@ pub fn list_dir(path: &Path, project_paths: &[PathBuf]) -> Result<Vec<DirEntry>,
     Ok(entries)
 }
 
-/// Spawns a detached, headless `claude -p <prompt>` in `project_path`
+/// Spawns a detached, headless `claude -p -- <prompt>` in `project_path`
 /// (validated the same way as `list_dir`), redirecting stdout/stderr to a
 /// timestamped log file under the app's data dir. No shell is invoked —
 /// args go through `Command::arg`, never string interpolation.
@@ -67,7 +78,7 @@ pub fn run_prompt(project_path: &Path, prompt: &str, project_paths: &[PathBuf]) 
     let stderr_log = stdout_log.try_clone().map_err(|e| e.to_string())?;
 
     std::process::Command::new("claude")
-        .args(["-p", prompt])
+        .args(prompt_args(prompt))
         .current_dir(&real)
         .stdout(stdout_log)
         .stderr(stderr_log)
@@ -170,6 +181,14 @@ mod tests {
         let roots = vec![canon(project.path())];
         let err = list_dir(unrelated.path(), &roots).unwrap_err();
         assert_eq!(err, OUTSIDE_PROJECTS);
+    }
+
+    #[test]
+    fn prompt_args_separator_prevents_flag_injection() {
+        // The claude CLI's `-p` is a boolean flag (commander.js); without a `--` separator a
+        // prompt starting with `-` is parsed as a flag rather than the positional prompt
+        // (empirically: `claude -p --version` prints the version instead of prompting).
+        assert_eq!(prompt_args("--version"), ["-p", "--", "--version"]);
     }
 
     #[test]
