@@ -35,8 +35,10 @@ function loop() {
   frame++;
   if (!paused && !sim.settled()) sim.tickOnce();
   draw();
-  // keep animating while anything is active (pulse), else stop — 0%-idle rule
-  if (!sim.settled() || visible().some((n) => n.status === "active")) requestAnimationFrame(loop);
+  // keep animating while (unpaused and unsettled) or anything is pulsing, else stop — 0%-idle
+  // rule. `paused` must gate the continue condition too, not just tickOnce(): otherwise pausing
+  // before the sim settles leaves rAF spinning forever on frames that do nothing but redraw.
+  if ((!paused && !sim.settled()) || visible().some((n) => n.status === "active")) requestAnimationFrame(loop);
   else running = false;
 }
 function wake() { if (!running) { running = true; requestAnimationFrame(loop); } }
@@ -107,6 +109,10 @@ store.onchange = () => {
   sim.sync(ids, store.edges().filter((e) => ids.includes(e.from) && ids.includes(e.to)));
   renderTasks(store, document.querySelector("#tasks")!, (sid) => { selected = sid; openDrillin(sid); });
   refreshTopbar(); renderEmptyState(); wake();
+  // keep the open drill-in panel live: without this it freezes at whatever it showed at the
+  // moment of the click until the user re-clicks the node, even as new events/context/files
+  // arrive for the selected agent.
+  if (selected && store.agents.has(selected)) void openDrillin(selected);
 };
 
 async function openDrillin(id: string) {
@@ -115,6 +121,9 @@ async function openDrillin(id: string) {
 }
 
 graphCanvas.parentElement!.addEventListener("click", (ev) => {
+  // a mousedown→drag(pan)→mouseup sequence still dispatches a click at the release point;
+  // without this guard every pan gesture mis-selects a node or clears the drill-in panel.
+  if (dragMoved) return;
   const pos = sim.positions();
   const wx = (ev.offsetX - overlay.width / 2) / cam.zoom + cam.x;
   const wy = (ev.offsetY - overlay.height / 2) / cam.zoom + cam.y;
@@ -128,24 +137,60 @@ graphCanvas.parentElement!.addEventListener("wheel", (ev) => {
   cam.zoom = Math.max(0.2, Math.min(4, cam.zoom * (ev.deltaY < 0 ? 1.1 : 0.9))); wake();
 });
 let drag: { x: number; y: number } | null = null;
-graphCanvas.parentElement!.addEventListener("mousedown", (e) => { drag = { x: e.clientX, y: e.clientY }; });
-window.addEventListener("mouseup", () => { drag = null; });
+let dragStart: { x: number; y: number } | null = null;
+let dragMoved = false;
+graphCanvas.parentElement!.addEventListener("mousedown", (e) => {
+  drag = { x: e.clientX, y: e.clientY }; dragStart = { x: e.clientX, y: e.clientY }; dragMoved = false;
+});
+window.addEventListener("mouseup", () => { drag = null; dragStart = null; });
 window.addEventListener("mousemove", (e) => {
   if (!drag) return;
+  if (dragStart && Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y) > 3) dragMoved = true;
   cam.x -= (e.clientX - drag.x) / cam.zoom; cam.y -= (e.clientY - drag.y) / cam.zoom;
   drag = { x: e.clientX, y: e.clientY }; wake();
 });
 
 function refreshTopbar() {
+  // Built via createElement/textContent rather than innerHTML string interpolation: project
+  // slugs and discovery root paths are attacker/filesystem-controlled strings that could
+  // otherwise break out of the markup (CSP blocks script execution, but not structural breakage).
   const bar = document.querySelector("#topbar")!;
   const projects = [...new Set(store.nodes().map((n) => n.project))].sort();
-  bar.innerHTML = `<select id="proj"><option value="">all projects</option>${projects.map((p) => `<option ${p === projectFilter ? "selected" : ""}>${p}</option>`).join("")}</select>
-    <label><input type="checkbox" id="live" ${liveOnly ? "checked" : ""}/> live only</label>
-    <label><input type="checkbox" id="pause" ${paused ? "checked" : ""}/> pause layout</label>
-    <span id="disc">${store.discovery ? `${store.discovery.roots.join(", ")} — ${store.discovery.projects} projects, ${store.discovery.sessions} sessions` : "discovering…"}</span>`;
-  bar.querySelector<HTMLSelectElement>("#proj")!.onchange = (e) => { projectFilter = (e.target as HTMLSelectElement).value; store.onchange?.(); };
-  bar.querySelector<HTMLInputElement>("#live")!.onchange = (e) => { liveOnly = (e.target as HTMLInputElement).checked; store.onchange?.(); };
-  bar.querySelector<HTMLInputElement>("#pause")!.onchange = (e) => { paused = (e.target as HTMLInputElement).checked; };
+
+  const projSelect = document.createElement("select");
+  projSelect.id = "proj";
+  const allOpt = document.createElement("option");
+  allOpt.value = ""; allOpt.textContent = "all projects";
+  projSelect.append(allOpt);
+  for (const p of projects) {
+    const opt = document.createElement("option");
+    opt.textContent = p; opt.selected = p === projectFilter;
+    projSelect.append(opt);
+  }
+  projSelect.onchange = (e) => { projectFilter = (e.target as HTMLSelectElement).value; store.onchange?.(); };
+
+  const liveLabel = document.createElement("label");
+  const liveInput = document.createElement("input");
+  liveInput.type = "checkbox"; liveInput.id = "live"; liveInput.checked = liveOnly;
+  liveInput.onchange = (e) => { liveOnly = (e.target as HTMLInputElement).checked; store.onchange?.(); };
+  liveLabel.append(liveInput, " live only");
+
+  const pauseLabel = document.createElement("label");
+  const pauseInput = document.createElement("input");
+  pauseInput.type = "checkbox"; pauseInput.id = "pause"; pauseInput.checked = paused;
+  pauseInput.onchange = (e) => {
+    paused = (e.target as HTMLInputElement).checked;
+    if (!paused) wake(); // resume the layout loop immediately on uncheck rather than waiting for the next event
+  };
+  pauseLabel.append(pauseInput, " pause layout");
+
+  const disc = document.createElement("span");
+  disc.id = "disc";
+  disc.textContent = store.discovery
+    ? `${store.discovery.roots.join(", ")} — ${store.discovery.projects} projects, ${store.discovery.sessions} sessions`
+    : "discovering…";
+
+  bar.replaceChildren(projSelect, liveLabel, pauseLabel, disc);
 }
 
 async function updateRss() {
