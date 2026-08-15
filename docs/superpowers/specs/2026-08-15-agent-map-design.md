@@ -91,7 +91,10 @@ Kersy must stay a background-friendly tool, not another Electron hog. These are 
 - **Minimal Rust dependency set:** `tauri`, `serde`/`serde_json`, `notify` + `notify-debouncer-full`, `tokio`, `dirs`, and a logging facade. Every additional crate needs a stated reason in the PR.
 - **Binary/installer ≤ 15 MB**; uses the OS webview (never bundles a browser engine).
 - **Idle cost ~zero:** event-driven end to end — no polling loops; when no transcript is being written, CPU sits at 0% and the force simulation is paused (it also pauses when the window is hidden/minimized).
-- **Memory bounded by design:** byte-offset tailing (never re-read or hold whole transcripts), ring buffers (~50 events/agent), stub nodes + lazy parse for sessions older than 7 days, target < 150 MB RSS with all live sessions on screen.
+- **Memory as low as possible (owner priority).** Two distinct budgets, because in a Tauri app the OS webview owns most of the RAM and we control the rest:
+  - **Rust process: ≤ 50 MB RSS typical, ≤ 100 MB worst case.** Enforced by design, not hope: raw JSON lines are parsed and **dropped immediately** — only the small derived state survives (an `AgentNode` is a few hundred bytes, not its transcript); byte-offset tailing (a transcript is never held or re-read); ring buffers ~50 events/agent storing truncated summaries (commands clipped to ~200 chars); repeated strings (project slugs, agent types, file paths) interned; stub nodes + lazy parse for sessions older than 7 days, and lazily-parsed detail is **evicted again** when the drill-in closes.
+  - **Webview:** minimized by having almost nothing in it — one canvas, no per-node DOM, no framework heap; the UI holds only the same derived state mirrored from Rust. Its floor (~50–100 MB) is set by the OS webview engine itself and is the unavoidable cost of any GUI; if that floor ever matters, the fallback is a ratatui terminal frontend on the same core crate.
+  - A memory figure (Rust RSS) is shown in the app's status bar so regressions are visible in daily use.
 - **Fast start:** window visible < 1 s; discovery + initial scan streams in behind it (splash states, never blocks).
 - **Renderer stays cheap:** one canvas, one `requestAnimationFrame` loop that stops when the simulation settles; no per-node DOM elements.
 
