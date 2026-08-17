@@ -9,12 +9,15 @@ export class CanvasRenderer implements Renderer {
     ctx.fillStyle = "#2B2B2B"; ctx.fillRect(0, 0, w, h);
     const sx = (x: number) => (x - cam.x) * cam.zoom + w / 2;
     const sy = (y: number) => (y - cam.y) * cam.zoom + h / 2;
-    ctx.strokeStyle = "#323232";
+    ctx.strokeStyle = "rgba(74, 77, 78, 0.7)";  // #4a4d4e @ 70%
+    ctx.lineWidth = 1.5;
     for (const e of edges) { ctx.beginPath(); ctx.moveTo(sx(e.x1), sy(e.y1)); ctx.lineTo(sx(e.x2), sy(e.y2)); ctx.stroke(); }
     for (const n of nodes) {
       const r = n.radius * (1 + 0.25 * n.pulse) * cam.zoom;
       ctx.fillStyle = `rgb(${n.color.map((c) => Math.round(c * 255)).join(",")})`;
       ctx.beginPath(); ctx.arc(sx(n.x), sy(n.y), r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.35)"; ctx.lineWidth = 1.5;
+      ctx.stroke();
     }
   }
 }

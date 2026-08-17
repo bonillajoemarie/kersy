@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { displayAgent } from "./names";
 import type { AgentView, Store, TaskView } from "./store";
 
 interface AgentEventDto { label: string; tool: string; isVerification: boolean; stdout: string | null; seq: number; }
@@ -11,6 +12,10 @@ export function renderTasks(store: Store, container: HTMLElement, onPick: (sessi
   container.replaceChildren(el("h3", "pane-title", "Tasks"));
   const buckets: Record<string, Array<{ sid: string; t: TaskView }>> = { in_progress: [], pending: [], completed: [] };
   for (const [sid, tasks] of store.tasks) for (const t of tasks) (buckets[t.status] ?? buckets.pending).push({ sid, t });
+
+  const allTasks = new Map<string, TaskView>();
+  for (const tasks of store.tasks.values()) for (const t of tasks) allTasks.set(t.id, t);
+
   for (const status of ["in_progress", "pending", "completed"] as const) {
     if (!buckets[status].length) continue;
     const group = el("details", `task-group ${status}`) as HTMLDetailsElement;
@@ -18,8 +23,11 @@ export function renderTasks(store: Store, container: HTMLElement, onPick: (sessi
     group.append(el("summary", "", `${status.replace("_", " ")} (${buckets[status].length})`));
     for (const { sid, t } of buckets[status]) {
       const row = el("div", `task task-${status}`, t.subject);
-      if (t.blockedBy.length) row.append(el("span", "blocked", ` ⛔ blocked by ${t.blockedBy.join(", ")}`));
-      row.onclick = () => onPick(sid); // sid is a sessionId, which IS the root agent's id — store.agents.get(sid) resolves
+      if (t.blockedBy.length) {
+        const names = t.blockedBy.map((id) => allTasks.get(id)?.subject ?? id);
+        row.append(el("span", "blocked", ` ⛔ blocked by ${names.join(", ")}`));
+      }
+      row.onclick = () => onPick(sid);
       group.append(row);
     }
     container.append(group);
@@ -34,7 +42,7 @@ export function renderTasks(store: Store, container: HTMLElement, onPick: (sessi
 export async function renderDrillin(agent: AgentView, container: HTMLElement, isValid: () => boolean = () => true): Promise<void> {
   container.hidden = false;
   container.replaceChildren(
-    el("h3", "pane-title", `${agent.agentType} — ${agent.description || agent.id}`),
+    el("h3", "pane-title", `${agent.agentType} — ${agent.description || displayAgent(agent)}`),
     el("div", "cmd", agent.currentActivity),
   );
   const gauge = el("div", "gauge");
@@ -57,7 +65,9 @@ export async function renderDrillin(agent: AgentView, container: HTMLElement, is
   if (!isValid()) return;
   const feed = el("div", "feed");
   for (const e of [...events].reverse()) {
-    const row = el("div", `evt ${e.isVerification ? "verify" : ""}`, `${e.tool}: ${e.label}`);
+    const row = el("div", `evt ${e.isVerification ? "verify" : ""}`);
+    const icon = e.isVerification ? (e.stdout && !e.stdout.includes("error") ? "✓" : "✗") : "";
+    row.textContent = `${icon ? icon + " " : ""}${e.tool}: ${e.label}`;
     if (e.stdout) row.append(el("pre", "cmd stdout", e.stdout));
     feed.append(row);
   }

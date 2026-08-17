@@ -5,6 +5,7 @@ import { PromptBar } from "./promptbar";
 import { createRenderer, STATUS_COLORS, type DrawEdge, type DrawNode, type Renderer } from "./render/renderer";
 import { Sim } from "./sim";
 import { Store, type MapEventMsg } from "./store";
+import { displayAgent } from "./names";
 import { ACTIVE_MS, IDLE_MS, statusOf } from "./status";
 
 const store = new Store();
@@ -20,10 +21,15 @@ try {
 }
 
 const cam = { x: 0, y: 0, zoom: 1 };
+const camTarget = { x: 0, y: 0 };
 let projectFilter = "";
 let liveOnly = false;
 let paused = false;
 let selected: string | null = null;
+
+let hovered: { id: string; screenX: number; screenY: number } | null = null;
+
+const spawnTime = new Map<string, number>();
 
 function setStatus(text: string, isError = false): void {
   const bar = document.querySelector<HTMLElement>("#statusbar")!;
@@ -34,12 +40,9 @@ function setStatus(text: string, isError = false): void {
 const explorer = new Explorer(document.querySelector("#explorer")!, (id) => focusSession(id));
 const promptBar = new PromptBar(document.querySelector<HTMLFormElement>("#promptbar")!, setStatus);
 
-// Direct camera snap for now (Task 5 brings the lerp-toward-target mechanism that would smooth
-// this into a glide); selecting + opening the drill-in is the same path the map's own click
-// handler uses below.
 function focusSession(id: string): void {
   const pos = sim.positions().get(id);
-  if (pos) { cam.x = pos.x; cam.y = pos.y; }
+  if (pos) { camTarget.x = pos.x; camTarget.y = pos.y; }
   selected = id;
   void openDrillin(id);
   wake();
@@ -50,15 +53,7 @@ const visible = () => store.nodes().filter((n) =>
 
 const sim = new Sim(() => {});
 let frame = 0;
-// `running` must be declared before `loop` references it (the brief's snippet referenced
-// `running` before its declaration point); hoisting `let` would still throw a TDZ error at
-// runtime, so the declaration is moved above the function that uses it.
 let running = false;
-// The single armed one-shot repaint timer (Finding 1b): when the rAF loop stops with some node
-// still active/idle, a future status transition is coming (active -> idle -> stale) even though
-// nothing else changes. Rather than a polling interval, we compute the earliest such transition
-// and arm exactly one setTimeout to wake() at that instant. Re-armed only when the loop stops
-// again; cleared/re-armed inside wake() so back-to-back wakes never stack duplicate timers.
 let repaintTimer: ReturnType<typeof setTimeout> | null = null;
 function armRepaintTimer() {
   if (repaintTimer !== null) { clearTimeout(repaintTimer); repaintTimer = null; }
@@ -67,7 +62,6 @@ function armRepaintTimer() {
   for (const n of visible()) {
     if (n.stub || !n.lastActivityMs) continue;
     const age = now - n.lastActivityMs;
-    // next threshold this node will cross, if any
     let next = Infinity;
     if (age < ACTIVE_MS) next = ACTIVE_MS - age;
     else if (age < IDLE_MS) next = IDLE_MS - age;
@@ -80,10 +74,19 @@ function armRepaintTimer() {
 function loop() {
   frame++;
   if (!paused && !sim.settled()) sim.tickOnce();
+
+  // Camera lerp toward target (only runs while loop is alive, so doesn't prevent sleep)
+  const dx = camTarget.x - cam.x;
+  const dy = camTarget.y - cam.y;
+  if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
+    cam.x += dx * 0.2;
+    cam.y += dy * 0.2;
+  } else {
+    cam.x = camTarget.x;
+    cam.y = camTarget.y;
+  }
+
   draw();
-  // keep animating while (unpaused and unsettled) or anything is pulsing, else stop — 0%-idle
-  // rule. `paused` must gate the continue condition too, not just tickOnce(): otherwise pausing
-  // before the sim settles leaves rAF spinning forever on frames that do nothing but redraw.
   if ((!paused && !sim.settled()) || visible().some((n) => statusOf(n) === "active")) requestAnimationFrame(loop);
   else { running = false; armRepaintTimer(); }
 }
@@ -92,29 +95,113 @@ function wake() {
   if (!running) { running = true; requestAnimationFrame(loop); }
 }
 
+// --- Glow sprite (offscreen, pre-rendered once) ---
+const GLOW_SIZE = 256;
+const glowCanvas = document.createElement("canvas");
+glowCanvas.width = GLOW_SIZE;
+glowCanvas.height = GLOW_SIZE;
+const gctx = glowCanvas.getContext("2d")!;
+const glowGrad = gctx.createRadialGradient(GLOW_SIZE / 2, GLOW_SIZE / 2, 0, GLOW_SIZE / 2, GLOW_SIZE / 2, GLOW_SIZE / 2);
+glowGrad.addColorStop(0, "rgba(255,255,255,0)");
+glowGrad.addColorStop(0.45, "rgba(255,255,255,0.35)");
+glowGrad.addColorStop(1, "rgba(255,255,255,0)");
+gctx.fillStyle = glowGrad;
+gctx.fillRect(0, 0, GLOW_SIZE, GLOW_SIZE);
+
 function draw() {
   if (!renderer) return;
   const pos = sim.positions();
+  const now = Date.now();
   const nodes: DrawNode[] = [];
-  const labels: Array<{ x: number; y: number; text: string; dim: boolean }> = [];
+  const labels: Array<{ x: number; y: number; text: string; dim: boolean; active: boolean; n: { id: string; agentType: string; currentActivity: string; contextTokens: number } }> = [];
   for (const n of visible()) {
     const p = pos.get(n.id); if (!p) continue;
+    if (!spawnTime.has(n.id)) spawnTime.set(n.id, now);
     const isSession = !n.id.includes("/");
     const st = statusOf(n);
-    const pulse = st === "active" ? (Math.sin(frame / 12) + 1) / 2 : 0;
-    nodes.push({ x: p.x, y: p.y, radius: isSession ? 14 : 8, color: STATUS_COLORS[st], pulse });
-    labels.push({ x: p.x, y: p.y, text: st === "active" ? n.currentActivity : (n.description || n.id), dim: st === "stale" });
+    const pulse = st === "active" ? Math.pow(Math.sin(frame / 12), 2) : 0;
+    const baseRadius = isSession ? 14 : 8;
+    const spawnEase = Math.min(1, (now - (spawnTime.get(n.id) ?? 0)) / 300);
+    nodes.push({ x: p.x, y: p.y, radius: baseRadius * spawnEase, color: STATUS_COLORS[st], pulse });
+    labels.push({ x: p.x, y: p.y, text: st === "active" ? n.currentActivity : (n.description || displayAgent(n)), dim: st === "stale", active: st === "active", n });
   }
   const edges: DrawEdge[] = store.edges().flatMap((e) => {
     const a = pos.get(e.from), b = pos.get(e.to);
     return a && b ? [{ x1: a.x, y1: a.y, x2: b.x, y2: b.y }] : [];
   });
   renderer.draw(nodes, edges, cam);
+
+  // --- Overlay: glow halos for active nodes ---
   octx.clearRect(0, 0, overlay.width, overlay.height);
-  octx.font = "11px monospace";
   for (const l of labels) {
+    if (l.active) {
+      const sx = (l.x - cam.x) * cam.zoom + overlay.width / 2;
+      const sy = (l.y - cam.y) * cam.zoom + overlay.height / 2;
+      const glowRadius = 14 * 3 * cam.zoom;
+      octx.globalAlpha = 0.35;
+      octx.drawImage(glowCanvas, sx - glowRadius, sy - glowRadius, glowRadius * 2, glowRadius * 2);
+      octx.globalAlpha = 1;
+    }
+  }
+
+  // --- Overlay: label pills + text ---
+  octx.font = "16px 'IBM Plex Sans', sans-serif";
+  for (const l of labels) {
+    const sx = (l.x - cam.x) * cam.zoom + overlay.width / 2 + 16;
+    const sy = (l.y - cam.y) * cam.zoom + overlay.height / 2 + 6;
+    const text = l.text.slice(0, 40);
+    const showPill = cam.zoom >= 0.5 || l.active;
+    if (showPill) {
+      const measured = octx.measureText(text);
+      const padX = 4, padY = 4;
+      const rx = sx - padX;
+      const ry = sy - 14;
+      const rw = measured.width + padX * 2;
+      const rh = 18 + padY * 2;
+      const r = 999;
+      octx.fillStyle = "rgba(36,36,36,0.85)";
+      octx.beginPath();
+      octx.moveTo(rx + r, ry);
+      octx.lineTo(rx + rw - r, ry);
+      octx.quadraticCurveTo(rx + rw, ry, rx + rw, ry + r);
+      octx.lineTo(rx + rw, ry + rh - r);
+      octx.quadraticCurveTo(rx + rw, ry + rh, rx + rw - r, ry + rh);
+      octx.lineTo(rx + r, ry + rh);
+      octx.quadraticCurveTo(rx, ry + rh, rx, ry + rh - r);
+      octx.lineTo(rx, ry + r);
+      octx.quadraticCurveTo(rx, ry, rx + r, ry);
+      octx.closePath();
+      octx.fill();
+    }
     octx.fillStyle = l.dim ? "#808080" : "#A9B7C6";
-    octx.fillText(l.text.slice(0, 40), (l.x - cam.x) * cam.zoom + overlay.width / 2 + 16, (l.y - cam.y) * cam.zoom + overlay.height / 2 + 4);
+    octx.fillText(text, sx, sy);
+  }
+
+  // --- Overlay: hover tooltip chip ---
+  if (hovered) {
+    const node = store.agents.get(hovered.id);
+    if (node) {
+      const st = statusOf(node);
+      const text = `${node.agentType} · ${st} · ${node.currentActivity} · ${(node.contextTokens / 1000).toFixed(1)}k ctx`;
+      octx.font = "16px 'IBM Plex Sans', sans-serif";
+      const measured = octx.measureText(text);
+      const padX = 8, padY = 4;
+      const chipW = measured.width + padX * 2;
+      const chipH = 16 + padY * 2;
+      let cx = hovered.screenX + 12;
+      let cy = hovered.screenY + 12;
+      if (cx + chipW > overlay.width) cx = hovered.screenX - chipW - 12;
+      if (cy + chipH > overlay.height) cy = hovered.screenY - chipH - 12;
+      octx.fillStyle = "rgba(36,36,36,0.92)";
+      octx.strokeStyle = "#323232";
+      octx.lineWidth = 1;
+      octx.beginPath();
+      octx.roundRect(cx, cy, chipW, chipH, 4);
+      octx.fill();
+      octx.stroke();
+      octx.fillStyle = "#A9B7C6";
+      octx.fillText(text, cx + padX, cy + padY + 16);
+    }
   }
 }
 
@@ -161,18 +248,9 @@ store.onchange = () => {
   explorer.render(store);
   promptBar.refresh(store);
   refreshTopbar(); renderEmptyState(); wake();
-  // keep the open drill-in panel live: without this it freezes at whatever it showed at the
-  // moment of the click until the user re-clicks the node, even as new events/context/files
-  // arrive for the selected agent.
   if (selected && store.agents.has(selected)) void openDrillin(selected);
 };
 
-// Generation token guarding against the openDrillin/renderDrillin race: store.onchange now
-// re-invokes openDrillin(selected) on every event batch to keep the panel live (see above), so
-// a slow earlier call's awaited invoke() can resolve after the user has selected a different
-// node — without this, agent A's feed could get appended under agent B's freshly-rendered
-// header. Each call captures its own generation number and renderDrillin re-checks it after
-// every await, dropping stale post-await DOM writes.
 let drillinGen = 0;
 async function openDrillin(id: string) {
   const a = store.agents.get(id); if (!a) return;
@@ -180,9 +258,24 @@ async function openDrillin(id: string) {
   await renderDrillin(a, document.querySelector("#drillin")!, () => gen === drillinGen);
 }
 
+function hitTestNode(wx: number, wy: number): { id: string; radius: number } | null {
+  const pos = sim.positions();
+  let best: { id: string; radius: number } | null = null;
+  let bestDist = Infinity;
+  for (const n of visible()) {
+    const p = pos.get(n.id); if (!p) continue;
+    const isSession = !n.id.includes("/");
+    const baseR = isSession ? 14 : 8;
+    const dist = Math.hypot(p.x - wx, p.y - wy);
+    if (dist < baseR + 6 && dist < bestDist) {
+      bestDist = dist;
+      best = { id: n.id, radius: baseR };
+    }
+  }
+  return best;
+}
+
 graphCanvas.parentElement!.addEventListener("click", (ev) => {
-  // a mousedown→drag(pan)→mouseup sequence still dispatches a click at the release point;
-  // without this guard every pan gesture mis-selects a node or clears the drill-in panel.
   if (dragMoved) return;
   const pos = sim.positions();
   const wx = (ev.offsetX - overlay.width / 2) / cam.zoom + cam.x;
@@ -193,6 +286,23 @@ graphCanvas.parentElement!.addEventListener("click", (ev) => {
   }
   document.querySelector<HTMLElement>("#drillin")!.hidden = true; selected = null;
 });
+
+graphCanvas.parentElement!.addEventListener("pointermove", (ev) => {
+  if (drag) { hovered = null; return; }
+  const wx = (ev.offsetX - overlay.width / 2) / cam.zoom + cam.x;
+  const wy = (ev.offsetY - overlay.height / 2) / cam.zoom + cam.y;
+  const hit = hitTestNode(wx, wy);
+  if (hit) {
+    hovered = { id: hit.id, screenX: ev.offsetX, screenY: ev.offsetY };
+  } else {
+    hovered = null;
+  }
+  wake();
+});
+
+graphCanvas.parentElement!.addEventListener("pointerleave", () => { hovered = null; wake(); });
+graphCanvas.parentElement!.addEventListener("mousedown", () => { hovered = null; });
+
 graphCanvas.parentElement!.addEventListener("wheel", (ev) => {
   cam.zoom = Math.max(0.2, Math.min(4, cam.zoom * (ev.deltaY < 0 ? 1.1 : 0.9))); wake();
 });
@@ -206,14 +316,14 @@ window.addEventListener("mouseup", () => { drag = null; dragStart = null; });
 window.addEventListener("mousemove", (e) => {
   if (!drag) return;
   if (dragStart && Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y) > 3) dragMoved = true;
-  cam.x -= (e.clientX - drag.x) / cam.zoom; cam.y -= (e.clientY - drag.y) / cam.zoom;
+  const dx = (e.clientX - drag.x) / cam.zoom;
+  const dy = (e.clientY - drag.y) / cam.zoom;
+  cam.x -= dx; cam.y -= dy;
+  camTarget.x = cam.x; camTarget.y = cam.y;
   drag = { x: e.clientX, y: e.clientY }; wake();
 });
 
 function refreshTopbar() {
-  // Built via createElement/textContent rather than innerHTML string interpolation: project
-  // slugs and discovery root paths are attacker/filesystem-controlled strings that could
-  // otherwise break out of the markup (CSP blocks script execution, but not structural breakage).
   const bar = document.querySelector("#topbar")!;
   const projects = [...new Set(store.nodes().map((n) => n.project))].sort();
 
@@ -240,9 +350,19 @@ function refreshTopbar() {
   pauseInput.type = "checkbox"; pauseInput.id = "pause"; pauseInput.checked = paused;
   pauseInput.onchange = (e) => {
     paused = (e.target as HTMLInputElement).checked;
-    if (!paused) wake(); // resume the layout loop immediately on uncheck rather than waiting for the next event
+    if (!paused) wake();
   };
   pauseLabel.append(pauseInput, " pause layout");
+
+  const legendActive = document.createElement("span");
+  legendActive.className = "chip active";
+  legendActive.textContent = "active";
+  const legendIdle = document.createElement("span");
+  legendIdle.className = "chip idle";
+  legendIdle.textContent = "idle";
+  const legendStale = document.createElement("span");
+  legendStale.className = "chip stale";
+  legendStale.textContent = "stale";
 
   const disc = document.createElement("span");
   disc.id = "disc";
@@ -250,13 +370,13 @@ function refreshTopbar() {
     ? `${store.discovery.roots.join(", ")} — ${store.discovery.projects} projects, ${store.discovery.sessions} sessions`
     : "discovering…";
 
-  bar.replaceChildren(projSelect, liveLabel, pauseLabel, disc);
+  bar.replaceChildren(projSelect, liveLabel, pauseLabel, legendActive, legendIdle, legendStale, disc);
 }
 
 async function updateRss() {
   const kb = await invoke<number>("rust_rss_kb");
   setStatus(`Kersy — rust rss ${(kb / 1024).toFixed(1)} MB`);
-  setTimeout(updateRss, 10_000);   // permitted timer: 1 cheap IPC / 10 s for the RSS budget display
+  setTimeout(updateRss, 10_000);
 }
 
 const ch = new Channel<MapEventMsg>();

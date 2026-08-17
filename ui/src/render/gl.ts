@@ -21,7 +21,9 @@ void main() {
   float d = length(vLocal);
   float alpha = 1.0 - smoothstep(0.92, 1.0, d);          // antialiased disc
   if (alpha <= 0.0) discard;
-  frag = vec4(vColor.rgb, alpha);
+  float rim = smoothstep(0.82, 0.87, d) * (1.0 - smoothstep(0.87, 0.92, d));
+  vec3 color = mix(vColor.rgb, vColor.rgb * 0.65, rim);   // ~35% darken in rim zone
+  frag = vec4(color, alpha);
 }`;
 const EDGE_VS = `#version 300 es
 layout(location=0) in vec2 aPos;      // world endpoint
@@ -32,7 +34,7 @@ void main() {
 }`;
 const EDGE_FS = `#version 300 es
 precision mediump float; out vec4 frag;
-void main() { frag = vec4(0.196, 0.196, 0.196, 1.0); }   // Darcula border #323232`;
+void main() { frag = vec4(0.290, 0.302, 0.306, 0.7); }   // #4a4d4e @ 70%`;
 
 function compile(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgram {
   const mk = (t: number, src: string) => {

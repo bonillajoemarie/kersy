@@ -10,8 +10,8 @@ const hex = (h: string): [number, number, number] =>
   [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255) as [number, number, number];
 
 export const STATUS_COLORS: Record<string, [number, number, number]> = {
-  active: hex("#CC7832"), idle: hex("#6897BB"), stale: hex("#808080"),
-  success: hex("#6A8759"), error: hex("#BC3F3C"),
+  active: hex("#d95926"), idle: hex("#3987e5"), stale: hex("#8a8a86"),
+  success: hex("#0ca30c"), error: hex("#d03b3b"),
 };
 
 export function createRenderer(canvas: HTMLCanvasElement): Renderer {

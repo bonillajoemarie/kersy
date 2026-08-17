@@ -79,7 +79,7 @@
 body {
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.5 var(--font-sans);
+  font: 20px/1.5 var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   font-variant-numeric: tabular-nums;
@@ -97,7 +97,7 @@ code, .cmd {
     "explorer stage  tasks " 1fr
     "prompt   prompt prompt" 36px
     "status   status status" 22px
-    / 240px 1fr 300px;
+    / 300px 1fr 380px;
 }
 
 #topbar { grid-area: top; background: var(--panel); border-bottom: 1px solid var(--border); }
@@ -114,14 +114,14 @@ code, .cmd {
   gap: var(--space-2);
   padding: 0 var(--space-2);
 }
-#drillin { position: absolute; right: 300px; top: 36px; bottom: 58px; width: 380px; background: var(--panel); border-left: 1px solid var(--border); overflow-y: auto; }
-#statusbar { grid-area: status; background: var(--panel); border-top: 1px solid var(--border); font-family: var(--mono); font-size: 11px; padding: 0 var(--space-2); }
+#drillin { position: absolute; right: 380px; top: 36px; bottom: 58px; width: 480px; background: var(--panel); border-left: 1px solid var(--border); overflow-y: auto; }
+#statusbar { grid-area: status; background: var(--panel); border-top: 1px solid var(--border); font-family: var(--mono); font-size: 16px; padding: 0 var(--space-2); }
 
 /* ---- Zed-style component classes (no box-shadow anywhere; 1px hairline borders only) ---- */
 
 .panel-header {
   padding: var(--space-2);
-  font-size: 12px;
+  font-size: 18px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--stale);
@@ -146,7 +146,7 @@ code, .cmd {
   border-radius: var(--radius-sm);
   background: var(--inset);
   border: 1px solid var(--border);
-  font-size: 11px;
+  font-size: 16px;
   line-height: 1.4;
 }
 .chip::before {
@@ -169,7 +169,7 @@ code, .cmd {
   border-radius: 999px;
   background: rgba(36, 36, 36, 0.85); /* --inset @ 85% alpha */
   color: var(--text);
-  font-size: 11px;
+  font-size: 16px;
   max-width: 40ch;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -183,7 +183,7 @@ code, .cmd {
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font: 13px var(--font-sans);
+  font: 20px var(--font-sans);
   cursor: pointer;
   transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
@@ -198,7 +198,7 @@ code, .cmd {
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font: 13px var(--font-sans);
+  font: 20px var(--font-sans);
 }
 .input:focus-visible { outline: none; border-color: var(--accent); }
 
@@ -210,7 +210,7 @@ code, .cmd {
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--inset);
-  font-size: 11px;
+  font-size: 16px;
   cursor: pointer;
   transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
@@ -222,18 +222,18 @@ code, .cmd {
 .pane-title { padding: var(--space-2); border-bottom: 1px solid var(--border); }
 .task, .evt { padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--border); cursor: pointer; }
 .task-in_progress { color: var(--active); } .task-completed { color: var(--stale); }
-.blocked { color: var(--error); font-size: 11px; }
+.blocked { color: var(--error); font-size: 16px; }
 .evt.verify { color: var(--success); }
-.stdout { color: var(--stale); white-space: pre-wrap; font-size: 11px; }
+.stdout { color: var(--stale); white-space: pre-wrap; font-size: 16px; }
 .gauge { background: var(--bg); border: 1px solid var(--border); margin: var(--space-2); height: 16px; border-radius: var(--radius-sm); }
-.gauge-fill { height: 100%; font-size: 10px; padding-left: var(--space-1); overflow: hidden; white-space: nowrap; }
+.gauge-fill { height: 100%; font-size: 15px; padding-left: var(--space-1); overflow: hidden; white-space: nowrap; }
 .gauge-fill.idle { background: var(--idle); } .gauge-fill.warn { background: var(--warn); color: #2B2B2B; }
 .gauge-fill.error { background: var(--error); }
 .badge.error { color: var(--error); padding: var(--space-1) var(--space-2); }
 #empty-state { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
   justify-content: center; gap: var(--space-2); text-align: center; pointer-events: none; }
-.empty-state-title { font-size: 16px; color: var(--text); }
-.empty-state-roots { color: var(--stale); font-size: 11px; }
+.empty-state-title { font-size: 24px; color: var(--text); }
+.empty-state-roots { color: var(--stale); font-size: 16px; }
 
 /* ---- Project Explorer ---- */
 
@@ -249,7 +249,7 @@ code, .cmd {
   color: var(--text);
   border: none;
   text-align: left;
-  font: 12px var(--font-sans);
+  font: 18px var(--font-sans);
   cursor: pointer;
   transition: background var(--dur) var(--ease);
 }
@@ -263,7 +263,7 @@ code, .cmd {
 
 .explorer-caret { display: inline-block; width: 1em; color: var(--stale); flex: none; }
 .explorer-name { font-weight: 500; color: var(--text); }
-.explorer-group-header { padding-left: var(--space-3); text-transform: uppercase; font-size: 11px; letter-spacing: 0.04em; color: var(--stale); }
+.explorer-group-header { padding-left: var(--space-3); text-transform: uppercase; font-size: 16px; letter-spacing: 0.04em; color: var(--stale); }
 .explorer-dir-row { padding-left: var(--space-4); }
 .explorer-dir .explorer-row { padding-left: calc(var(--space-4) + var(--space-2)); }
 .explorer-special-dir .chip { margin-left: auto; }
@@ -271,7 +271,7 @@ code, .cmd {
 
 .explorer-session { padding-left: var(--space-4); }
 .explorer-session-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.explorer-session-age { margin-left: auto; font-size: 11px; flex: none; }
+.explorer-session-age { margin-left: auto; font-size: 16px; flex: none; }
 
 .explorer-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .explorer-dot.active { background: var(--active); }
