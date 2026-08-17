@@ -8,6 +8,18 @@ state on disk, shows verification receipts as each agent step completes, and
 tracks a per-session context-usage gauge, all without contacting any network
 service or the agents themselves.
 
+## What it looks like
+
+Darcula-dark cockpit: a project explorer pane (left, lazy file tree + running
+sessions) and a prompt bar sit alongside the force-directed session map. Each
+node gets a status-colored rim (`active` #d95926, `idle` #3987e5, `stale`
+#8a8a86), a glow halo while active, and a rounded label pill (hidden past a
+zoom threshold except for active nodes). Hovering a node shows a tooltip chip
+(agent · status · activity · context usage); clicking one opens a drill-in
+panel with its receipts (✓/✗) and task cards, including human-readable
+blocked-by references. A legend in the top bar keys the three status colors.
+The camera eases toward a clicked node instead of snapping.
+
 ## Install
 
 Prebuilt bundles (Linux only, Phase 1):
